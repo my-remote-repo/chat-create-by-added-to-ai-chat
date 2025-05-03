@@ -1,0 +1,141 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Користувач
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  email         String    @unique
+  password      String
+  emailVerified DateTime?
+  image         String?
+  bio           String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  ownedChats     Chat[]          @relation("ChatOwner")
+  participations ChatParticipant[]
+  messages       Message[]
+  sentFiles      File[]
+}
+
+// Акаунт (для соціальної авторизації)
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+// Сесія
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Чат (особистий або груповий)
+model Chat {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  name        String?
+  description String?
+  isGroup     Boolean   @default(false)
+  ownerId     String?   @db.ObjectId
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  owner         User?            @relation("ChatOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  participants  ChatParticipant[]
+  messages      Message[]
+  files         File[]
+}
+
+// Участь користувача в чаті
+model ChatParticipant {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  chatId         String   @db.ObjectId
+  userId         String   @db.ObjectId
+  isAdmin        Boolean  @default(false)
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now())
+  notificationsEnabled Boolean @default(true)
+  isArchived     Boolean  @default(false)
+
+  chat           Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+}
+
+// Повідомлення
+model Message {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  content   String
+  chatId    String    @db.ObjectId
+  userId    String    @db.ObjectId
+  replyToId String?   @db.ObjectId
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  isDeleted Boolean   @default(false)
+  readBy    String[]  @db.ObjectId
+
+  chat      Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Змінюємо налаштування для циклічних посилань
+  replyTo   Message?  @relation("ReplyTo", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies   Message[] @relation("ReplyTo")
+  files     File[]
+}
+
+// Файли (прикріплені до повідомлень)
+model File {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  url       String
+  size      Int
+  type      String
+  messageId String?   @db.ObjectId
+  chatId    String?   @db.ObjectId
+  userId    String    @db.ObjectId
+  createdAt DateTime  @default(now())
+
+  // Для самореференції через messageId
+  message   Message?  @relation(fields: [messageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  chat      Chat?     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Для збереження верифікаційних токенів
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
