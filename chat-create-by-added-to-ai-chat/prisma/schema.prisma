@@ -21,6 +21,8 @@ model User {
   bio           String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  status        String    @default("OFFLINE") // "ONLINE", "OFFLINE", "AWAY", "BUSY"
+  lastSeen      DateTime  @default(now())
 
   accounts       Account[]
   sessions       Session[]
@@ -28,6 +30,23 @@ model User {
   participations ChatParticipant[]
   messages       Message[]
   sentFiles      File[]
+  settings       UserSettings?
+}
+
+// Налаштування користувача
+model UserSettings {
+  id                    String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId                String  @unique @db.ObjectId
+  theme                 String  @default("system")
+  language              String  @default("uk")
+  notificationsEnabled  Boolean @default(true)
+  soundsEnabled         Boolean @default(true)
+  desktopNotifications  Boolean @default(true)
+  emailNotifications    Boolean @default(true)
+  showReadReceipts      Boolean @default(true)
+  showOnlineStatus      Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // Акаунт (для соціальної авторизації)
@@ -65,6 +84,7 @@ model Chat {
   name        String?
   description String?
   isGroup     Boolean   @default(false)
+  image       String?
   ownerId     String?   @db.ObjectId
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -77,17 +97,19 @@ model Chat {
 
 // Участь користувача в чаті
 model ChatParticipant {
-  id             String   @id @default(auto()) @map("_id") @db.ObjectId
-  chatId         String   @db.ObjectId
-  userId         String   @db.ObjectId
-  isAdmin        Boolean  @default(false)
-  joinedAt       DateTime @default(now())
-  lastReadAt     DateTime @default(now())
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  chatId              String   @db.ObjectId
+  userId              String   @db.ObjectId
+  isAdmin             Boolean  @default(false)
+  joinedAt            DateTime @default(now())
+  lastReadAt          DateTime @default(now())
   notificationsEnabled Boolean @default(true)
-  isArchived     Boolean  @default(false)
+  isArchived          Boolean  @default(false)
+  isBlocked           Boolean  @default(false)
+  nickname            String?
 
-  chat           Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chat                Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([chatId, userId])
 }
@@ -102,6 +124,7 @@ model Message {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   isDeleted Boolean   @default(false)
+  isEdited  Boolean   @default(false)
   readBy    String[]  @db.ObjectId
 
   chat      Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
@@ -110,6 +133,12 @@ model Message {
   replyTo   Message?  @relation("ReplyTo", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   replies   Message[] @relation("ReplyTo")
   files     File[]
+
+  // Індекси для швидкого пошуку
+  @@index([chatId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([chatId, createdAt])
 }
 
 // Файли (прикріплені до повідомлень)
@@ -117,6 +146,7 @@ model File {
   id        String    @id @default(auto()) @map("_id") @db.ObjectId
   name      String
   url       String
+  key       String?   // Ключ для S3 або іншого сховища
   size      Int
   type      String
   messageId String?   @db.ObjectId
@@ -138,4 +168,15 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// Статистика чатів (для аналітики)
+model ChatStats {
+  id              String     @id @default(auto()) @map("_id") @db.ObjectId
+  chatId          String     @unique
+  messageCount    Int        @default(0)
+  participantCount Int       @default(0)
+  lastActivityAt  DateTime   @default(now())
+  
+  @@index([chatId])
 }

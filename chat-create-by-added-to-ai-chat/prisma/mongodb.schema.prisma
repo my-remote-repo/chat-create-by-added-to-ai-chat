@@ -1,0 +1,78 @@
+// Схема MongoDB через Prisma
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/mongodb-client"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGODB_DATABASE_URL")
+}
+
+// Повідомлення
+model Message {
+  id            String       @id @default(auto()) @map("_id") @db.ObjectId
+  content       String
+  chatId        String
+  senderId      String
+  replyToId     String?      @db.ObjectId
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  isDeleted     Boolean      @default(false)
+  isEdited      Boolean      @default(false)
+  readBy        String[]
+  reactions     Reaction[]
+  files         MessageFile[]
+
+  // Зв'язки для самореференції (посилань на інші повідомлення)
+  replyTo       Message?     @relation("ReplyTo", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies       Message[]    @relation("ReplyTo")
+
+  // Індекси для швидкого пошуку
+  @@index([chatId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@index([isDeleted])
+  @@index([chatId, createdAt]) // Для швидкого пошуку повідомлень у чаті
+}
+
+// Реакції на повідомлення
+type Reaction {
+  emoji    String
+  userId   String
+  username String
+  createdAt DateTime
+}
+
+// Файли, прикріплені до повідомлень
+type MessageFile {
+  id        String
+  name      String
+  url       String
+  size      Int
+  type      String
+  createdAt DateTime
+}
+
+// Налаштування для читання повідомлень
+model ReadStatus {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  chatId    String
+  userId    String
+  lastRead  DateTime   @default(now())
+  
+  @@unique([chatId, userId])
+  @@index([chatId])
+  @@index([userId])
+}
+
+// Статистика чатів (для аналітики)
+model ChatStats {
+  id              String     @id @default(auto()) @map("_id") @db.ObjectId
+  chatId          String     @unique
+  messageCount    Int        @default(0)
+  participantCount Int       @default(0)
+  lastActivityAt  DateTime   @default(now())
+  
+  @@index([chatId])
+}
