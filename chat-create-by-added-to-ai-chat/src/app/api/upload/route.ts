@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession as getServerSessionImpl } from 'next-auth';
+// Імпортуйте getServerSessionImpl правильно і використовуйте його
+import { getServerSession as getServerSessionImpl } from 'next-auth/next';
 import { nextAuthConfig } from '@/lib/auth';
 import { S3FileUploadService } from '@/domains/message/infrastructure/services/fileUploadService';
 
@@ -8,8 +9,8 @@ import { S3FileUploadService } from '@/domains/message/infrastructure/services/f
  */
 export async function POST(req: NextRequest) {
   try {
-    // Перевірка аутентифікації
-    const session = await getServerSession();
+    // Використовуємо імпортовану функцію
+    const session = await getServerSessionImpl(nextAuthConfig);
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
