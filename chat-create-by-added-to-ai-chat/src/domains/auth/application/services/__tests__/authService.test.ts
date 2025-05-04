@@ -1,3 +1,5 @@
+console.log('Тестовий файл завантажено');
+
 // src/domains/auth/application/services/__tests__/authService.test.ts
 import { AuthService } from '../authService';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
