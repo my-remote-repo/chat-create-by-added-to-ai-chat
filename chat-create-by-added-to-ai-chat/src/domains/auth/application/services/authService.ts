@@ -1,10 +1,22 @@
+// src/domains/auth/application/services/authService.ts
 import { compare, hash } from 'bcryptjs';
+import { randomUUID } from 'crypto';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
 import { User, UserDTO } from '@/domains/user/domain/entities/user';
 import { redisClient } from '@/lib/redis-client';
+import { JwtService } from '../../infrastructure/services/jwtService';
+import { EmailService } from '../../infrastructure/services/emailService';
+import { AuthLogger } from '../../infrastructure/services/authLogger';
+import { prisma } from '@/lib/db';
 
 export class AuthService {
-  constructor(private readonly userRepository: UserRepository) {}
+  private readonly jwtService: JwtService;
+  private readonly emailService: EmailService;
+
+  constructor(private readonly userRepository: UserRepository) {
+    this.jwtService = new JwtService();
+    this.emailService = new EmailService();
+  }
 
   /**
    * Реєстрація нового користувача
@@ -37,9 +49,37 @@ export class AuthService {
   }
 
   /**
+   * Відправка email для підтвердження
+   */
+  async sendVerificationEmail(userId: string, email: string, name: string): Promise<boolean> {
+    // Створюємо унікальний токен
+    const token = randomUUID();
+
+    try {
+      // Зберігаємо токен в базі використовуючи VerificationToken модель
+      await prisma.verificationToken.create({
+        data: {
+          identifier: userId,
+          token,
+          expires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 години
+        },
+      });
+
+      // Відправляємо email
+      return await this.emailService.sendVerificationEmail(email, name, token);
+    } catch (error) {
+      AuthLogger.error('Error sending verification email', { userId, email, error });
+      return false;
+    }
+  }
+
+  /**
    * Логін користувача
    */
-  async login(email: string, password: string): Promise<UserDTO | null> {
+  async login(
+    email: string,
+    password: string
+  ): Promise<{ user: UserDTO; tokens: { accessToken: string; refreshToken: string } } | null> {
     // Пошук користувача
     const user = await this.userRepository.findByEmail(email);
 
@@ -55,17 +95,94 @@ export class AuthService {
     }
 
     // Оновлюємо статус користувача
-    await redisClient.setUserStatus(user.id, 'online'); // Змінено з 'ONLINE' на малі літери
+    await redisClient.setUserStatus(user.id, 'online');
 
-    return user.toDTO();
+    // Генеруємо JWT токени
+    const tokens = await this.jwtService.generateTokens(user.id, user.email);
+
+    // Зберігаємо refresh токен - використовуємо модель Session замість RefreshToken
+    await this.saveRefreshToken(user.id, tokens.refreshToken);
+
+    return {
+      user: user.toDTO(),
+      tokens,
+    };
+  }
+
+  /**
+   * Зберігає refresh токен
+   */
+  private async saveRefreshToken(userId: string, token: string): Promise<void> {
+    // Використовуємо модель Session для збереження refresh токена
+    await prisma.session.create({
+      data: {
+        userId,
+        sessionToken: token,
+        expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 днів
+      },
+    });
+  }
+
+  /**
+   * Перевіряє чи валідний refresh токен
+   */
+  async validateRefreshToken(userId: string, token: string): Promise<boolean> {
+    const storedToken = await prisma.session.findFirst({
+      where: {
+        userId,
+        sessionToken: token,
+        expires: {
+          gt: new Date(),
+        },
+      },
+    });
+
+    return !!storedToken;
+  }
+
+  /**
+   * Оновлює refresh токен
+   */
+  async updateRefreshToken(userId: string, oldToken: string, newToken: string): Promise<void> {
+    // Видаляємо старий токен
+    await prisma.session.deleteMany({
+      where: {
+        userId,
+        sessionToken: oldToken,
+      },
+    });
+
+    // Зберігаємо новий токен
+    await this.saveRefreshToken(userId, newToken);
+  }
+
+  /**
+   * Відключення всіх refresh токенів користувача
+   */
+  async revokeAllRefreshTokens(userId: string): Promise<void> {
+    await prisma.session.deleteMany({
+      where: {
+        userId,
+      },
+    });
   }
 
   /**
    * Вихід користувача
    */
-  async logout(userId: string): Promise<boolean> {
+  async logout(userId: string, refreshToken?: string): Promise<boolean> {
     // Оновлюємо статус користувача
-    await redisClient.setUserStatus(userId, 'offline'); // Змінено з 'OFFLINE' на малі літери
+    await redisClient.setUserStatus(userId, 'offline');
+
+    // Якщо передано refresh токен, відключаємо тільки його
+    if (refreshToken) {
+      await prisma.session.deleteMany({
+        where: {
+          userId,
+          sessionToken: refreshToken,
+        },
+      });
+    }
 
     return true;
   }
@@ -91,27 +208,22 @@ export class AuthService {
     }
 
     // Генерація токена для скидання пароля
-    const token =
-      Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const token = randomUUID();
 
     try {
       // Створюємо запис в базі даних для скидання пароля
-      const { prisma } = require('@/lib/db');
-
-      await prisma.userToken.create({
+      await prisma.verificationToken.create({
         data: {
-          userId: user.id,
-          token: token,
-          type: 'reset_password',
-          expiresAt: new Date(Date.now() + 3600 * 1000), // термін дії 1 година
+          identifier: user.id,
+          token,
+          expires: new Date(Date.now() + 1 * 60 * 60 * 1000), // термін дії 1 година
         },
       });
 
-      // TODO: Відправити email з посиланням для скидання пароля
-
-      return true;
+      // Відправляємо email
+      return await this.emailService.sendPasswordResetEmail(email, user.name, token);
     } catch (error) {
-      console.error('Error storing password reset token:', error);
+      AuthLogger.error('Error initiating password reset', { email, error });
       return false;
     }
   }
@@ -122,22 +234,21 @@ export class AuthService {
   async completePasswordReset(token: string, newPassword: string): Promise<boolean> {
     try {
       // Отримуємо запис токена з бази даних
-      const { prisma } = require('@/lib/db');
-
-      const tokenRecord = await prisma.userToken.findUnique({
-        where: { token },
+      const tokenRecord = await prisma.verificationToken.findFirst({
+        where: {
+          token,
+          expires: {
+            gt: new Date(),
+          },
+        },
       });
 
-      if (
-        !tokenRecord ||
-        tokenRecord.type !== 'reset_password' ||
-        tokenRecord.expiresAt < new Date()
-      ) {
+      if (!tokenRecord) {
         return false; // Токен недійсний, неправильного типу або термін дії закінчився
       }
 
       // Отримуємо користувача
-      const user = await this.userRepository.findById(tokenRecord.userId);
+      const user = await this.userRepository.findById(tokenRecord.identifier);
 
       if (!user) {
         return false;
@@ -148,7 +259,7 @@ export class AuthService {
 
       // Оновлюємо пароль користувача
       await prisma.user.update({
-        where: { id: tokenRecord.userId },
+        where: { id: tokenRecord.identifier },
         data: {
           password: hashedPassword,
           updatedAt: new Date(),
@@ -156,13 +267,16 @@ export class AuthService {
       });
 
       // Видаляємо запис токена
-      await prisma.userToken.delete({
+      await prisma.verificationToken.delete({
         where: { id: tokenRecord.id },
       });
 
+      // Відключаємо всі refresh токени
+      await this.revokeAllRefreshTokens(user.id);
+
       return true;
     } catch (error) {
-      console.error('Error completing password reset:', error);
+      AuthLogger.error('Error completing password reset', { token, error });
       return false;
     }
   }
@@ -173,22 +287,21 @@ export class AuthService {
   async verifyEmail(token: string): Promise<boolean> {
     try {
       // Отримуємо запис токена з бази даних
-      const { prisma } = require('@/lib/db');
-
-      const tokenRecord = await prisma.userToken.findUnique({
-        where: { token },
+      const tokenRecord = await prisma.verificationToken.findFirst({
+        where: {
+          token,
+          expires: {
+            gt: new Date(),
+          },
+        },
       });
 
-      if (
-        !tokenRecord ||
-        tokenRecord.type !== 'email_verification' ||
-        tokenRecord.expiresAt < new Date()
-      ) {
+      if (!tokenRecord) {
         return false; // Токен недійсний, неправильного типу або термін дії закінчився
       }
 
       // Отримуємо користувача
-      const user = await this.userRepository.findById(tokenRecord.userId);
+      const user = await this.userRepository.findById(tokenRecord.identifier);
 
       if (!user) {
         return false;
@@ -199,13 +312,13 @@ export class AuthService {
       await this.userRepository.update(verifiedUser);
 
       // Видаляємо запис токена
-      await prisma.userToken.delete({
+      await prisma.verificationToken.delete({
         where: { id: tokenRecord.id },
       });
 
       return true;
     } catch (error) {
-      console.error('Error verifying email:', error);
+      AuthLogger.error('Error verifying email', { token, error });
       return false;
     }
   }

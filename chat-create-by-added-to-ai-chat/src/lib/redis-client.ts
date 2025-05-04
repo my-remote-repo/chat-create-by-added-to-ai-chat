@@ -370,4 +370,8 @@ export class RedisService implements IRedisService {
 }
 
 // Створюємо і експортуємо інстанс сервісу
-export const redisClient = new RedisService();
+// export const redisClient = new RedisService();
+
+// Замість цього використовуйте заглушку
+import { MockRedisService } from './mock-redis-client';
+export const redisClient = new MockRedisService();

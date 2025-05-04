@@ -180,3 +180,78 @@ model ChatStats {
   
   @@index([chatId])
 }
+
+// Модель для зберігання CSRF токенів
+model CsrfToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+// Модель для зберігання refresh токенів
+model RefreshToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+// Модель для логування подій безпеки
+model SecurityLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  level     String   // ERROR, WARN, INFO, DEBUG
+  message   String
+  context   Json?    // Додаткові дані про подію
+  userId    String?  @db.ObjectId
+  ip        String?
+  userAgent String?
+  timestamp DateTime @default(now())
+  
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@index([userId])
+  @@index([timestamp])
+}
+
+// Додаткові індекси для VerificationToken
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@index([identifier])
+  @@index([expires])
+}
+
+// Додаткові індекси для RefreshToken
+model RefreshToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([token])
+}
+
+// Додаткові індекси для CsrfToken
+model CsrfToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  
+  @@index([expiresAt])
+}

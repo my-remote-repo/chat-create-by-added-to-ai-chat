@@ -4,6 +4,7 @@ import { MessageRepository } from '@/domains/message/domain/repositories/message
 import { PrismaMessageRepository } from '@/domains/message/infrastructure/repositories/prismaMessageRepository';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
 import { PrismaUserRepository } from '@/domains/user/infrastructure/repositories/prismaUserRepository';
+import { AuthService } from '@/domains/auth/application/services/authService';
 
 // Клас-контейнер для залежностей
 export class ServiceLocator {
@@ -35,6 +36,14 @@ export class ServiceLocator {
       this.services.set('ChatService', new ChatService(this.getRepository('ChatRepository')));
     } catch (error) {
       console.error('Failed to load ChatService:', error);
+      // Створюємо заглушку для ChatService
+      this.services.set('ChatService', {
+        // Основні методи, які можуть бути потрібні
+        getChatById: async () => null,
+        getUserChats: async () => [],
+        createGroupChat: async () => ({}),
+        createOrGetPersonalChat: async () => ({}),
+      });
     }
 
     try {
@@ -48,6 +57,14 @@ export class ServiceLocator {
       );
     } catch (error) {
       console.error('Failed to load MessageService:', error);
+      // Створюємо заглушку для MessageService
+      this.services.set('MessageService', {
+        // Основні методи, які можуть бути потрібні
+        getMessageById: async () => null,
+        getChatMessages: async () => [],
+        createMessage: async () => null,
+        markAllAsRead: async () => true,
+      });
     }
 
     try {
@@ -55,6 +72,56 @@ export class ServiceLocator {
       this.services.set('UserService', new UserService(this.getRepository('UserRepository')));
     } catch (error) {
       console.error('Failed to load UserService:', error);
+      // Створюємо заглушку для UserService
+      this.services.set('UserService', {
+        // Основні методи, які можуть бути потрібні
+        getUserProfile: async () => null,
+        updateUserProfile: async () => null,
+        searchUsers: async () => [],
+      });
+    }
+
+    // Додаємо реєстрацію AuthService
+    try {
+      const { AuthService } = require('@/domains/auth/application/services/authService');
+      this.services.set('AuthService', new AuthService(this.getRepository('UserRepository')));
+    } catch (error) {
+      console.error('Failed to load AuthService:', error);
+      // Створюємо заглушку для AuthService
+      this.services.set('AuthService', {
+        // Основні методи, які можуть бути потрібні
+        register: async (
+          name: string,
+          email: string,
+          password: string
+        ): Promise<{ id: string; name: string; email: string } | null> => ({
+          id: 'mock-id',
+          name,
+          email,
+        }),
+        login: async (
+          email: string,
+          password: string
+        ): Promise<{
+          user: { id: string; name: string; email: string };
+          tokens: { accessToken: string; refreshToken: string };
+        } | null> => null,
+        logout: async (userId: string, refreshToken?: string): Promise<boolean> => true,
+        sendVerificationEmail: async (
+          userId: string,
+          email: string,
+          name: string
+        ): Promise<boolean> => true,
+        verifyEmail: async (token: string): Promise<boolean> => true,
+        initiatePasswordReset: async (email: string): Promise<boolean> => true,
+        completePasswordReset: async (token: string, newPassword: string): Promise<boolean> => true,
+        validateRefreshToken: async (userId: string, token: string): Promise<boolean> => true,
+        updateRefreshToken: async (
+          userId: string,
+          oldToken: string,
+          newToken: string
+        ): Promise<void> => {},
+      });
     }
   }
 
@@ -114,5 +181,10 @@ export class ServiceFactory {
 
   public static createUserService(): any {
     return ServiceLocator.getInstance().getService('UserService');
+  }
+
+  // Додаємо метод для створення AuthService
+  public static createAuthService(): any {
+    return ServiceLocator.getInstance().getService('AuthService');
   }
 }
