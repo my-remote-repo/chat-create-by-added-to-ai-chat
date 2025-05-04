@@ -12,6 +12,7 @@ const publicRoutes = [
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/reset-password',
+  '/api/auth/reset-password/confirm', // Додайте цей рядок!
   '/api/auth/verify-email',
   '/api/auth/refresh-token',
 ];

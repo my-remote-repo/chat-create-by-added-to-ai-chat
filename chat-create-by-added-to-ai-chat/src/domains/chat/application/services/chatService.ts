@@ -1,7 +1,7 @@
 import { Chat, ChatDTO } from '../../domain/entities/chat';
 import { Participant } from '../../domain/entities/participant';
 import { ChatRepository } from '../../domain/repositories/chatRepository';
-import { redisClient } from '@/lib/redis-client';
+import { redisClient } from '@/lib/mock-redis-client';
 
 export class ChatService {
   constructor(private readonly chatRepository: ChatRepository) {}

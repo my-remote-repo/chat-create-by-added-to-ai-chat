@@ -26,6 +26,13 @@ export async function POST(req: NextRequest) {
     // Отримання даних з запиту
     const data = await req.json();
 
+    // Логування для відлагодження
+    console.log('Отримано запит на підтвердження скидання пароля:', {
+      token: data.token ? data.token.substring(0, 5) + '...' : 'відсутній',
+      hasPassword: !!data.password,
+      hasConfirmPassword: !!data.confirmPassword,
+    });
+
     // Валідація даних
     try {
       const validatedData = resetPasswordConfirmSchema.parse(data);
@@ -36,10 +43,14 @@ export async function POST(req: NextRequest) {
       // Отримуємо сервіс автентифікації
       const authService = ServiceFactory.createAuthService();
 
+      // Додаємо логування в AuthService.completePasswordReset
+      console.log('Перевіряємо токен:', data.token);
+
       // Завершуємо скидання пароля
       const result = await authService.completePasswordReset(token, password);
 
       if (!result) {
+        console.log('Скидання пароля не вдалося - невірний або прострочений токен');
         AuthLogger.warn('Password reset failed', { token });
         return NextResponse.json({ error: 'Невірний або прострочений токен' }, { status: 400 });
       }

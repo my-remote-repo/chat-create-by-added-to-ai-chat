@@ -3,7 +3,7 @@ import { compare, hash } from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
 import { User, UserDTO } from '@/domains/user/domain/entities/user';
-import { redisClient } from '@/lib/redis-client';
+import { redisClient } from '@/lib/mock-redis-client';
 import { JwtService } from '../../infrastructure/services/jwtService';
 import { EmailService } from '../../infrastructure/services/emailService';
 import { AuthLogger } from '../../infrastructure/services/authLogger';
@@ -233,6 +233,7 @@ export class AuthService {
    */
   async completePasswordReset(token: string, newPassword: string): Promise<boolean> {
     try {
+      console.log('Початок completePasswordReset з токеном:', token);
       // Отримуємо запис токена з бази даних
       const tokenRecord = await prisma.verificationToken.findFirst({
         where: {
@@ -243,7 +244,17 @@ export class AuthService {
         },
       });
 
+      console.log('Результат пошуку токена:', tokenRecord ? 'Знайдено' : 'Не знайдено');
+      if (tokenRecord) {
+        console.log('Деталі токена:', {
+          identifier: tokenRecord.identifier,
+          expires: tokenRecord.expires,
+          isExpired: tokenRecord.expires < new Date(),
+        });
+      }
+
       if (!tokenRecord) {
+        console.log('Токен не знайдено в базі даних');
         return false; // Токен недійсний, неправильного типу або термін дії закінчився
       }
 
@@ -251,6 +262,7 @@ export class AuthService {
       const user = await this.userRepository.findById(tokenRecord.identifier);
 
       if (!user) {
+        console.log('не знайдено користувача');
         return false;
       }
 
@@ -276,6 +288,7 @@ export class AuthService {
 
       return true;
     } catch (error) {
+      console.error('Помилка в completePasswordReset:', error);
       AuthLogger.error('Error completing password reset', { token, error });
       return false;
     }
