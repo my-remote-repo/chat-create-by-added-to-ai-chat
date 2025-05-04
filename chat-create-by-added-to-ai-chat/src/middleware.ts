@@ -17,17 +17,10 @@ const publicRoutes = [
 ];
 
 // Шляхи, які починаються з цих префіксів, також публічні
-const publicPrefixes = ['/auth/', '/_next/', '/favicon.ico', '/api/auth/', '/embed/', '/assets/'];
-
-// Маршрути, що потребують адміністративних прав
-const adminRoutes = ['/admin', '/api/admin'];
+const publicPrefixes = ['/auth/', '/_next/', '/favicon.ico', '/assets/'];
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
-
-  // Реєстрація запиту в логах
-  const clientIP = req.headers.get('x-forwarded-for') || req.ip || 'unknown';
-  const userAgent = req.headers.get('user-agent') || 'unknown';
 
   // Перевірка чи це публічний маршрут
   if (
@@ -46,13 +39,6 @@ export async function middleware(req: NextRequest) {
   const accessToken = token || cookieToken;
 
   if (!accessToken) {
-    AuthLogger.warn('Unauthorized access attempt', {
-      pathname,
-      clientIP,
-      userAgent,
-      reason: 'No token provided',
-    });
-
     // Якщо це API запит, повертаємо 401
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -70,13 +56,6 @@ export async function middleware(req: NextRequest) {
     const payload = await jwtService.verifyAccessToken(accessToken);
 
     if (!payload || !payload.userId) {
-      AuthLogger.warn('Unauthorized access attempt', {
-        pathname,
-        clientIP,
-        userAgent,
-        reason: 'Invalid token',
-      });
-
       // Якщо це API запит, повертаємо 401
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
@@ -88,45 +67,12 @@ export async function middleware(req: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // Перевірка прав доступу для адміністративних маршрутів
-    if (adminRoutes.some(route => pathname.startsWith(route))) {
-      // Перевіримо чи користувач має роль адміністратора
-      // Для цього потрібно додатково перевірити роль у токені або в базі даних
-      const isAdmin = payload.role === 'admin';
-
-      if (!isAdmin) {
-        AuthLogger.warn('Forbidden access attempt', {
-          userId: payload.userId,
-          pathname,
-          clientIP,
-          userAgent,
-          reason: 'Admin access required',
-        });
-
-        // Якщо це API запит, повертаємо 403
-        if (pathname.startsWith('/api/')) {
-          return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-
-        // Інакше перенаправляємо на головну сторінку
-        return NextResponse.redirect(new URL('/', req.url));
-      }
-    }
-
     // Додаємо інформацію про користувача до запиту
     const requestHeaders = new Headers(req.headers);
     requestHeaders.set('x-user-id', payload.userId);
     if (payload.role) {
       requestHeaders.set('x-user-role', payload.role);
     }
-
-    // Логування успішного доступу
-    AuthLogger.info('User authenticated', {
-      userId: payload.userId,
-      pathname,
-      clientIP,
-      userAgent,
-    });
 
     // Продовжуємо обробку запиту
     return NextResponse.next({
@@ -136,12 +82,6 @@ export async function middleware(req: NextRequest) {
     });
   } catch (error) {
     console.error('Auth middleware error:', error);
-    AuthLogger.error('Auth middleware error', {
-      pathname,
-      clientIP,
-      userAgent,
-      error,
-    });
 
     // Якщо це API запит, повертаємо 401
     if (pathname.startsWith('/api/')) {
