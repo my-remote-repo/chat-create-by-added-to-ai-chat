@@ -5,7 +5,7 @@ import { AuthService } from '../authService';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
 import { User } from '@/domains/user/domain/entities/user';
 import { prisma } from '@/lib/db';
-import { redisClient } from '@/lib/mock-redis-client';
+import { redisClient } from '@/lib/redis-client';
 import { hash } from 'bcryptjs';
 
 // Mock залежностей
@@ -27,7 +27,7 @@ jest.mock('@/lib/db', () => ({
   },
 }));
 
-jest.mock('@/lib/mock-redis-client', () => ({
+jest.mock('@/lib/redis-client', () => ({
   redisClient: {
     setUserStatus: jest.fn(),
     getUserSession: jest.fn(),

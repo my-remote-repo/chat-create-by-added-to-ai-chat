@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ServiceFactory } from '@/shared/infrastructure/DependencyInjection';
 import { JwtService } from '@/domains/auth/infrastructure/services/jwtService';
 import { AuthLogger } from '@/domains/auth/infrastructure/services/authLogger';
+import { redisClient } from '@/lib/redis-client';
 
 export async function GET(req: NextRequest) {
   try {
@@ -12,6 +13,14 @@ export async function GET(req: NextRequest) {
 
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // ДОДАНА ПЕРЕВІРКА ЧОРНОГО СПИСКУ
+    // Перевіряємо, чи токен у чорному списку
+    const isBlacklisted = await redisClient.isBlacklisted(token);
+    if (isBlacklisted) {
+      AuthLogger.warn('Token revoked', { token: token.substring(0, 10) + '...' });
+      return NextResponse.json({ error: 'Token revoked' }, { status: 401 });
     }
 
     // Отримуємо JWT сервіс

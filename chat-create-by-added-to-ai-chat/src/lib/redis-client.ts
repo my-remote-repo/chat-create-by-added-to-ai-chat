@@ -17,6 +17,17 @@ export class RedisService implements IRedisService {
     this.connect();
   }
 
+  async testConnection(): Promise<boolean> {
+    try {
+      await this.client.ping();
+      console.log('Redis connection: SUCCESS');
+      return true;
+    } catch (error) {
+      console.error('Redis connection: FAILED', error);
+      return false;
+    }
+  }
+
   private async connect() {
     if (!this.client.isOpen) {
       try {
@@ -327,24 +338,9 @@ export class RedisService implements IRedisService {
     return this.client.del(key);
   }
 
-  async keys(pattern: string): Promise<string[]> {
-    await this.connect();
-    return this.client.keys(pattern);
-  }
-
-  async exists(key: string): Promise<number> {
-    await this.connect();
-    return this.client.exists(key);
-  }
-
   async expire(key: string, seconds: number): Promise<number> {
     await this.connect();
     return this.client.expire(key, seconds);
-  }
-
-  async ttl(key: string): Promise<number> {
-    await this.connect();
-    return this.client.ttl(key);
   }
 
   async sAdd(key: string, ...members: string[]): Promise<number> {
@@ -367,11 +363,62 @@ export class RedisService implements IRedisService {
       await this.client.quit();
     }
   }
+
+  // Додайте ці методи до класу RealRedisService в src/lib/redis-client.ts
+  async keys(pattern: string): Promise<string[]> {
+    await this.connect();
+    return this.client.keys(pattern);
+  }
+
+  async ttl(key: string): Promise<number> {
+    await this.connect();
+    return this.client.ttl(key);
+  }
+
+  async exists(key: string): Promise<number> {
+    await this.connect();
+    return this.client.exists(key);
+  }
+
+  // Методи для роботи з чорним списком токенів
+  async addToBlacklist(token: string, expiresInSeconds: number): Promise<void> {
+    const key = `blacklist:token:${token}`;
+    await this.set(key, 'revoked', { EX: expiresInSeconds });
+    console.log(`Токен додано до чорного списку. Закінчується через ${expiresInSeconds} сек.`);
+  }
+
+  async isBlacklisted(token: string): Promise<boolean> {
+    const key = `blacklist:token:${token}`;
+    const result = await this.get(key);
+    return result !== null;
+  }
+
+  // Метод для отримання інформації про чорний список
+  async getBlacklistInfo(): Promise<{
+    count: number;
+    tokens: { token: string; expiresIn: number }[];
+  }> {
+    const keys = await this.keys('blacklist:token:*');
+
+    const tokens = [];
+    for (const key of keys) {
+      const ttl = await this.ttl(key);
+      tokens.push({
+        token: key.replace('blacklist:token:', '').substring(0, 10) + '...',
+        expiresIn: ttl,
+      });
+    }
+
+    return {
+      count: keys.length,
+      tokens,
+    };
+  }
 }
 
 // Створюємо і експортуємо інстанс сервісу
-// export const redisClient = new RedisService();
+export const redisClient = new RedisService();
 
 // Замість цього використовуйте заглушку
-import { MockRedisService } from './mock-redis-client';
-export const redisClient = new MockRedisService();
+// import { MockRedisService } from './mock-redis-client';
+// export const redisClient = new MockRedisService();

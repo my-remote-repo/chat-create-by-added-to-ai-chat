@@ -1,21 +1,27 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    reactStrictMode: true,
-    images: {
-      domains: [
-        'localhost',
-        'avatars.githubusercontent.com',
-        // Додайте домени для S3 та інших сервісів, які ви плануєте використовувати
-        `${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`
-      ],
-    },
-    webpack: (config) => {
-      config.externals.push({
-        'utf-8-validate': 'commonjs utf-8-validate',
-        'bufferutil': 'commonjs bufferutil',
-      });
+  webpack: (config, { isServer }) => {
+    // Фіксація для node:crypto і node:* протоколів
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        crypto: require.resolve('crypto-browserify'),
+        stream: require.resolve('stream-browserify'),
+        buffer: require.resolve('buffer/'),
+      };
+    }
+
+    // Виключення middleware з цього правила
+    if (config.name === 'middleware') {
       return config;
-    },
-  };
-  
-  module.exports = nextConfig;
+    }
+
+    return config;
+  },
+  // Налаштування для middleware
+  experimental: {
+    instrumentationHook: true, // Якщо використовуєте Next.js 13+
+  },
+};
+
+module.exports = nextConfig;

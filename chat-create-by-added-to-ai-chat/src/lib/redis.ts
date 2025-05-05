@@ -230,8 +230,9 @@ export class FakeRedisService implements IRedisService {
 }
 
 // Експорт типів та сервісу
-// export type RedisService = IRedisService;
-// export const redisService: RedisService = new FakeRedisService();
+export type RedisService = IRedisService;
+export const redisService: RedisService = new FakeRedisService();
+
 // Замість цього використовуйте заглушку
-import { MockRedisService } from './mock-redis-client';
-export const redisClient = new MockRedisService();
+// import { MockRedisService } from './mock-redis-client';
+// export const redisClient = new MockRedisService();

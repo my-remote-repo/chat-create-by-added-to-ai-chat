@@ -1,6 +1,6 @@
 // src/domains/auth/infrastructure/services/jwtService.ts
 import { SignJWT, jwtVerify } from 'jose';
-import { randomUUID } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 // Розширюємо інтерфейс JWTPayload з jose
 interface CustomJWTPayload {
@@ -31,7 +31,7 @@ export class JwtService {
     email?: string,
     role?: string
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const jti = randomUUID();
+    const jti = uuidv4();
     const iat = Math.floor(Date.now() / 1000);
 
     // Генерація access токена (коротка тривалість - 15 хвилин)

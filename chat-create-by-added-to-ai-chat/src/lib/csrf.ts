@@ -1,11 +1,11 @@
-import { randomBytes } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 import { prisma } from './db';
 
 /**
  * Генерує CSRF-токен
  */
 export async function generateCSRFToken(): Promise<string> {
-  const token = randomBytes(32).toString('hex');
+  const token = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, '');
 
   // Зберігаємо токен і час створення в сесії
   // В цьому прикладі використовуємо модель Session

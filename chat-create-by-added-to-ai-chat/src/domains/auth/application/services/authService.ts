@@ -1,9 +1,9 @@
 // src/domains/auth/application/services/authService.ts
 import { compare, hash } from 'bcryptjs';
-import { randomUUID } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 import { UserRepository } from '@/domains/user/domain/repositories/userRepository';
 import { User, UserDTO } from '@/domains/user/domain/entities/user';
-import { redisClient } from '@/lib/mock-redis-client';
+import { redisClient } from '@/lib/redis-client';
 import { JwtService } from '../../infrastructure/services/jwtService';
 import { EmailService } from '../../infrastructure/services/emailService';
 import { AuthLogger } from '../../infrastructure/services/authLogger';
@@ -53,7 +53,7 @@ export class AuthService {
    */
   async sendVerificationEmail(userId: string, email: string, name: string): Promise<boolean> {
     // Створюємо унікальний токен
-    const token = randomUUID();
+    const token = uuidv4();
 
     try {
       // Зберігаємо токен в базі використовуючи VerificationToken модель
@@ -170,18 +170,31 @@ export class AuthService {
   /**
    * Вихід користувача
    */
-  async logout(userId: string, refreshToken?: string): Promise<boolean> {
+  async logout(userId: string, refreshToken?: string, accessToken?: string): Promise<boolean> {
     // Оновлюємо статус користувача
     await redisClient.setUserStatus(userId, 'offline');
 
-    // Якщо передано refresh токен, відключаємо тільки його
-    if (refreshToken) {
-      await prisma.session.deleteMany({
-        where: {
-          userId,
-          sessionToken: refreshToken,
-        },
-      });
+    try {
+      // Якщо переданий access токен, додаємо його до чорного списку
+      if (accessToken) {
+        // Визначаємо залишковий час життя токена (15 хвилин)
+        const expiresInSeconds = 15 * 60;
+        await redisClient.addToBlacklist(accessToken, expiresInSeconds);
+        console.log(`Токен користувача ${userId} додано до чорного списку`);
+      }
+
+      // Якщо передано refresh токен, видаляємо сесію
+      if (refreshToken) {
+        await prisma.session.deleteMany({
+          where: {
+            userId,
+            sessionToken: refreshToken,
+          },
+        });
+        console.log(`Сесію користувача ${userId} видалено`);
+      }
+    } catch (error) {
+      console.error('Помилка при логауті:', error);
     }
 
     return true;
@@ -208,7 +221,7 @@ export class AuthService {
     }
 
     // Генерація токена для скидання пароля
-    const token = randomUUID();
+    const token = uuidv4();
 
     try {
       // Створюємо запис в базі даних для скидання пароля

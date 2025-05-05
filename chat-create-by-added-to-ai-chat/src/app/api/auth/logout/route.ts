@@ -1,3 +1,4 @@
+// src/app/api/auth/logout/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { ServiceFactory } from '@/shared/infrastructure/DependencyInjection';
 import { AuthLogger } from '@/domains/auth/infrastructure/services/authLogger';
@@ -29,8 +30,8 @@ export async function POST(req: NextRequest) {
     // Отримуємо сервіс автентифікації
     const authService = ServiceFactory.createAuthService();
 
-    // Виходимо з системи
-    await authService.logout(payload.userId, refreshToken);
+    // Виходимо з системи, передаючи також access токен для чорного списку
+    await authService.logout(payload.userId, refreshToken, token);
 
     AuthLogger.info('User logged out', { userId: payload.userId });
 

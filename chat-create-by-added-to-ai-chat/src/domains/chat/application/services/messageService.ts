@@ -1,6 +1,6 @@
 import { MessageRepository } from '@/domains/message/domain/repositories/messageRepository';
 import { ChatRepository } from '@/domains/chat/domain/repositories/chatRepository';
-import { redisClient } from '@/lib/mock-redis-client';
+import { redisClient } from '@/lib/redis-client';
 
 // Оголошення типів, якщо модулі не знайдені
 interface MessageDTO {

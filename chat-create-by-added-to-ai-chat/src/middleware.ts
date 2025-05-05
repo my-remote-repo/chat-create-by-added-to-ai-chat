@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { JwtService } from './domains/auth/infrastructure/services/jwtService';
 import { AuthLogger } from './domains/auth/infrastructure/services/authLogger';
+// Додайте імпорт Redis клієнта
+// import { redisClient } from './lib/redis-client';
 
 // Маршрути, що не потребують авторизації
 const publicRoutes = [

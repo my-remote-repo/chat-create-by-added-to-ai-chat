@@ -1,5 +1,5 @@
 // src/lib/rate-limiter.ts
-import { redisClient } from './mock-redis-client';
+import { redisClient } from './redis-client';
 
 export class RateLimiter {
   private readonly prefix: string;

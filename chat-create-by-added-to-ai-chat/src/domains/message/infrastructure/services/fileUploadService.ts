@@ -1,5 +1,5 @@
 import AWS from 'aws-sdk';
-import { randomUUID } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 // Типи для завантаження файлів
 export interface UploadResult {
@@ -30,9 +30,9 @@ export class S3FileUploadService {
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
       region: process.env.AWS_REGION,
     });
-    
+
     this.bucket = process.env.AWS_BUCKET_NAME || '';
-    
+
     if (!this.bucket) {
       console.error('AWS_BUCKET_NAME is not defined in environment variables');
     }
@@ -48,21 +48,23 @@ export class S3FileUploadService {
         error: 'S3 bucket is not configured',
       };
     }
-    
+
     try {
       // Створення безпечного імені файлу
       const extension = file.name.split('.').pop() || '';
-      const key = `${folder}/${randomUUID()}.${extension}`;
-      
+      const key = `${folder}/${uuidv4()}.${extension}`;
+
       // Завантаження файлу
-      const uploadResult = await this.s3.upload({
-        Bucket: this.bucket,
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.type,
-        ACL: 'public-read', // Дозволяє публічний доступ
-      }).promise();
-      
+      const uploadResult = await this.s3
+        .upload({
+          Bucket: this.bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.type,
+          ACL: 'public-read', // Дозволяє публічний доступ
+        })
+        .promise();
+
       return {
         success: true,
         url: uploadResult.Location,
@@ -84,13 +86,15 @@ export class S3FileUploadService {
     if (!this.bucket) {
       return false;
     }
-    
+
     try {
-      await this.s3.deleteObject({
-        Bucket: this.bucket,
-        Key: key,
-      }).promise();
-      
+      await this.s3
+        .deleteObject({
+          Bucket: this.bucket,
+          Key: key,
+        })
+        .promise();
+
       return true;
     } catch (error) {
       console.error('File deletion error:', error);
