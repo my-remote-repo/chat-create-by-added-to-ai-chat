@@ -104,24 +104,6 @@ export class RedisService implements IRedisService {
     await this.client.sRem(this.getKey(RedisKeyType.USER_SESSION, userId), sessionId);
   }
 
-  // Методи для статусів користувачів
-  async setUserStatus(
-    userId: string,
-    status: 'online' | 'offline' | 'away' | 'busy'
-  ): Promise<void> {
-    await this.connect();
-    const key = this.getKey(RedisKeyType.USER_STATUS, userId);
-    await this.client.set(key, status);
-
-    // Якщо статус змінився на оффлайн, оновлюємо час останньої активності
-    if (status === 'offline') {
-      await this.client.set(
-        this.getKey(RedisKeyType.USER_STATUS, userId, 'lastSeen'),
-        new Date().toISOString()
-      );
-    }
-  }
-
   async getUserStatus(userId: string): Promise<string> {
     await this.connect();
     const key = this.getKey(RedisKeyType.USER_STATUS, userId);
@@ -413,6 +395,52 @@ export class RedisService implements IRedisService {
       count: keys.length,
       tokens,
     };
+  }
+
+  // Додаємо методи для роботи зі статусами користувачів
+  async getUsersByStatus(status: string): Promise<string[]> {
+    await this.connect();
+    // Користуємо Set для зберігання ідентифікаторів користувачів за статусами
+    const key = `user:status:list:${status.toLowerCase()}`;
+    return this.client.sMembers(key);
+  }
+
+  async setUserStatus(
+    userId: string,
+    status: 'online' | 'offline' | 'away' | 'busy'
+  ): Promise<void> {
+    await this.connect();
+    const statusKey = `user:status:${userId}`;
+    const normalizedStatus = status.toLowerCase();
+
+    // Отримуємо попередній статус
+    const previousStatus = await this.client.get(statusKey);
+
+    // Видаляємо користувача з старого списку статусів
+    if (previousStatus) {
+      await this.client.sRem(`user:status:list:${previousStatus}`, userId);
+    }
+
+    // Встановлюємо новий статус
+    await this.client.set(statusKey, normalizedStatus);
+
+    // Додаємо користувача до нового списку статусів
+    await this.client.sAdd(`user:status:list:${normalizedStatus}`, userId);
+
+    // Якщо статус змінився на оффлайн, оновлюємо час останньої активності
+    if (normalizedStatus === 'offline') {
+      await this.client.set(`user:status:${userId}:lastSeen`, new Date().toISOString());
+    }
+
+    // Подія про зміну статусу для реального часу (для WebSockets)
+    await this.publish(
+      'user:status:changed',
+      JSON.stringify({
+        userId,
+        status: normalizedStatus,
+        timestamp: new Date().toISOString(),
+      })
+    );
   }
 }
 

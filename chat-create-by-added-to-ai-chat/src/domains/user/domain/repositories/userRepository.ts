@@ -1,42 +1,21 @@
-import { User } from "../entities/user";
+import { User } from '../entities/user';
+import { UserSettings } from '../entities/userSettings';
 
-/**
- * Інтерфейс репозиторію користувача
- * Визначає методи для роботи з даними користувача
- */
 export interface UserRepository {
-  /**
-   * Отримати користувача за ID
-   */
+  // Існуючі методи
   findById(id: string): Promise<User | null>;
-  
-  /**
-   * Отримати користувача за email
-   */
   findByEmail(email: string): Promise<User | null>;
-  
-  /**
-   * Створити нового користувача
-   */
   create(user: User): Promise<User>;
-  
-  /**
-   * Оновити існуючого користувача
-   */
   update(user: User): Promise<User>;
-  
-  /**
-   * Видалити користувача
-   */
   delete(id: string): Promise<void>;
-  
-  /**
-   * Пошук користувачів за ім'ям (для пошуку при створенні чату)
-   */
   searchByName(query: string, limit?: number): Promise<User[]>;
-  
-  /**
-   * Перевірка чи існує користувач з вказаним email
-   */
   existsByEmail(email: string): Promise<boolean>;
+
+  // Нові методи для налаштувань
+  findUserSettings(userId: string): Promise<UserSettings | null>;
+  saveUserSettings(settings: UserSettings): Promise<UserSettings>;
+
+  // Методи для статусів
+  getUsersWithStatus(status: string, limit?: number): Promise<User[]>;
+  updateUserStatus(userId: string, status: string): Promise<void>;
 }

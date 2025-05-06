@@ -123,6 +123,20 @@ export class ServiceLocator {
         ): Promise<void> => {},
       });
     }
+    // Додаємо ImageService до залежностей
+    try {
+      const { ImageService } = require('@/domains/user/infrastructure/services/imageService');
+      this.services.set('ImageService', new ImageService());
+    } catch (error) {
+      console.error('Failed to load ImageService:', error);
+      // Створюємо заглушку для ImageService
+      this.services.set('ImageService', {
+        processAndSaveAvatar: async () =>
+          JSON.stringify({
+            original: '/uploads/default-avatar.png',
+          }),
+      });
+    }
   }
 
   // Отримання репозиторію
@@ -186,5 +200,9 @@ export class ServiceFactory {
   // Додаємо метод для створення AuthService
   public static createAuthService(): any {
     return ServiceLocator.getInstance().getService('AuthService');
+  }
+
+  public static createImageService(): any {
+    return ServiceLocator.getInstance().getService('ImageService');
   }
 }

@@ -22,15 +22,17 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   status        String    @default("OFFLINE") // "ONLINE", "OFFLINE", "AWAY", "BUSY"
-  lastSeen      DateTime  @default(now())
+  lastSeen      DateTime?  @default(now())  // додаємо ? для позначення nullable
 
-  accounts       Account[]
-  sessions       Session[]
-  ownedChats     Chat[]          @relation("ChatOwner")
-  participations ChatParticipant[]
-  messages       Message[]
-  sentFiles      File[]
-  settings       UserSettings?
+  accounts           Account[]
+  sessions           Session[]
+  ownedChats         Chat[]                @relation("ChatOwner")
+  participations     ChatParticipant[]
+  messages           Message[]
+  sentFiles          File[]
+  settings           UserSettings?
+  refreshTokens      RefreshToken[]        // Додаємо протилежне відношення
+  securityLogs       SecurityLog[]         // Додаємо протилежне відношення
 }
 
 // Налаштування користувача
@@ -168,17 +170,17 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@index([identifier])
+  @@index([expires])
 }
 
 // Статистика чатів (для аналітики)
 model ChatStats {
   id              String     @id @default(auto()) @map("_id") @db.ObjectId
-  chatId          String     @unique
+  chatId          String     @unique  // Тільки @unique
   messageCount    Int        @default(0)
   participantCount Int       @default(0)
   lastActivityAt  DateTime   @default(now())
-  
-  @@index([chatId])
 }
 
 // Модель для зберігання CSRF токенів
@@ -187,6 +189,8 @@ model CsrfToken {
   token     String   @unique
   createdAt DateTime @default(now())
   expiresAt DateTime
+  
+  @@index([expiresAt])
 }
 
 // Модель для зберігання refresh токенів
@@ -200,6 +204,7 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId])
+  @@index([expiresAt])
 }
 
 // Модель для логування подій безпеки
@@ -217,41 +222,4 @@ model SecurityLog {
   
   @@index([userId])
   @@index([timestamp])
-}
-
-// Додаткові індекси для VerificationToken
-model VerificationToken {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-  @@index([identifier])
-  @@index([expires])
-}
-
-// Додаткові індекси для RefreshToken
-model RefreshToken {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@index([userId])
-  @@index([expiresAt])
-  @@index([token])
-}
-
-// Додаткові індекси для CsrfToken
-model CsrfToken {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  token     String   @unique
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  
-  @@index([expiresAt])
 }

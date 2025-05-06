@@ -1,6 +1,9 @@
+// src/domains/user/infrastructure/repositories/prismaUserRepository.ts
 import { prisma } from '@/lib/db';
 import { User, UserProps } from '../../domain/entities/user';
+import { UserSettings, UserSettingsProps } from '../../domain/entities/userSettings';
 import { UserRepository } from '../../domain/repositories/userRepository';
+import { redisClient } from '@/lib/redis-client';
 
 /**
  * Prisma імплементація UserRepository
@@ -88,5 +91,104 @@ export class PrismaUserRepository implements UserRepository {
     });
 
     return count > 0;
+  }
+
+  async findUserSettings(userId: string): Promise<UserSettings | null> {
+    const settings = await prisma.userSettings.findUnique({
+      where: { userId },
+    });
+
+    if (!settings) {
+      return null;
+    }
+
+    return new UserSettings({
+      id: settings.id,
+      userId: settings.userId,
+      theme: settings.theme,
+      language: settings.language,
+      notificationsEnabled: settings.notificationsEnabled,
+      soundsEnabled: settings.soundsEnabled,
+      desktopNotifications: settings.desktopNotifications,
+      emailNotifications: settings.emailNotifications,
+      showReadReceipts: settings.showReadReceipts,
+      showOnlineStatus: settings.showOnlineStatus,
+    });
+  }
+
+  async saveUserSettings(settings: UserSettings): Promise<UserSettings> {
+    // Якщо вже є налаштування, оновлюємо, якщо немає - створюємо
+    const existingSettings = await prisma.userSettings.findUnique({
+      where: { userId: settings.userId },
+    });
+
+    let updatedSettings;
+
+    if (existingSettings) {
+      updatedSettings = await prisma.userSettings.update({
+        where: { userId: settings.userId },
+        data: {
+          theme: settings.theme,
+          language: settings.language,
+          notificationsEnabled: settings.notificationsEnabled,
+          soundsEnabled: settings.soundsEnabled,
+          desktopNotifications: settings.desktopNotifications,
+          emailNotifications: settings.emailNotifications,
+          showReadReceipts: settings.showReadReceipts,
+          showOnlineStatus: settings.showOnlineStatus,
+        },
+      });
+    } else {
+      updatedSettings = await prisma.userSettings.create({
+        data: {
+          userId: settings.userId,
+          theme: settings.theme,
+          language: settings.language,
+          notificationsEnabled: settings.notificationsEnabled,
+          soundsEnabled: settings.soundsEnabled,
+          desktopNotifications: settings.desktopNotifications,
+          emailNotifications: settings.emailNotifications,
+          showReadReceipts: settings.showReadReceipts,
+          showOnlineStatus: settings.showOnlineStatus,
+        },
+      });
+    }
+
+    return new UserSettings(updatedSettings as UserSettingsProps);
+  }
+
+  async getUsersWithStatus(status: string, limit: number = 20): Promise<User[]> {
+    // Для ефективності, використовуємо Redis для отримання статусів
+    const userIds = await redisClient.getUsersByStatus(status);
+
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    // Обмежуємо кількість запитуваних користувачів
+    const limitedUserIds = userIds.slice(0, limit);
+
+    // Отримуємо деталі користувачів з бази даних
+    const users = await prisma.user.findMany({
+      where: {
+        id: { in: limitedUserIds },
+      },
+    });
+
+    return users.map(user => new User(user as UserProps));
+  }
+
+  async updateUserStatus(userId: string, status: string): Promise<void> {
+    // Оновлюємо статус у базі даних
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        status,
+        lastSeen: new Date(),
+      },
+    });
+
+    // Оновлюємо статус у Redis
+    await redisClient.setUserStatus(userId, status as any);
   }
 }
