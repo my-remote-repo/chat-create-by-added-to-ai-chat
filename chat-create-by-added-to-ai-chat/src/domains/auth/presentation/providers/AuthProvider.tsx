@@ -1,6 +1,8 @@
+// src/domains/auth/presentation/providers/AuthProvider.tsx
 'use client';
 
 import { createContext, useContext, ReactNode, useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 type User = {
   id: string;
@@ -12,10 +14,28 @@ type User = {
 type AuthContextType = {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (name: string, email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordConfirm: (
+    token: string,
+    password: string,
+    confirmPassword: string
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
   isAuthenticated: boolean;
+  updateUser: (user: User) => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,6 +43,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     // Перевіряємо, чи є токен у localStorage
@@ -43,9 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(data.user);
         })
         .catch(() => {
-          // Якщо помилка - видаляємо токен
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('refreshToken');
+          // Якщо помилка - видаляємо токен і пробуємо оновити через refresh token
+          refreshToken().catch(() => {
+            // Якщо не вдалося оновити, видаляємо все
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+          });
         })
         .finally(() => {
           setLoading(false);
@@ -55,7 +79,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const refreshToken = async (): Promise<boolean> => {
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!refreshToken) return false;
+
+    try {
+      const response = await fetch('/api/auth/refresh-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) throw new Error('Не вдалося оновити токен');
+
+      const data = await response.json();
+      localStorage.setItem('accessToken', data.accessToken);
+
+      // Отримуємо дані користувача з оновленим токеном
+      const userResponse = await fetch('/api/auth/me', {
+        headers: {
+          Authorization: `Bearer ${data.accessToken}`,
+        },
+      });
+
+      if (!userResponse.ok) throw new Error('Не вдалося отримати дані користувача');
+
+      const userData = await userResponse.json();
+      setUser(userData.user);
+
+      return true;
+    } catch (error) {
+      console.error('Помилка оновлення токена:', error);
+      return false;
+    }
+  };
+
+  const login = async (email: string, password: string) => {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -65,11 +126,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ email, password }),
       });
 
-      if (!response.ok) {
-        throw new Error('Помилка автентифікації');
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || 'Помилка входу в систему',
+        };
+      }
 
       // Зберігаємо токени
       localStorage.setItem('accessToken', data.tokens.accessToken);
@@ -78,32 +142,106 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Встановлюємо користувача
       setUser(data.user);
 
-      return true;
+      return { success: true };
     } catch (error) {
       console.error('Помилка при вході:', error);
-      return false;
+      return {
+        success: false,
+        error: 'Сталася помилка під час входу в систему',
+      };
     }
   };
 
-  const register = async (name: string, email: string, password: string): Promise<boolean> => {
+  const register = async (
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string
+  ) => {
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name, email, password, confirmPassword: password }),
+        body: JSON.stringify({ name, email, password, confirmPassword }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error('Помилка реєстрації');
+        return {
+          success: false,
+          error: data.error || (data.details ? data.details[0]?.message : 'Помилка реєстрації'),
+        };
       }
 
       // Успішно зареєстровано
-      return true;
+      return { success: true };
     } catch (error) {
       console.error('Помилка при реєстрації:', error);
-      return false;
+      return {
+        success: false,
+        error: 'Сталася помилка під час реєстрації',
+      };
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || 'Помилка запиту на скидання пароля',
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Помилка при запиті на скидання пароля:', error);
+      return {
+        success: false,
+        error: 'Сталася помилка під час запиту на скидання пароля',
+      };
+    }
+  };
+
+  const resetPasswordConfirm = async (token: string, password: string, confirmPassword: string) => {
+    try {
+      const response = await fetch('/api/auth/reset-password/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token, password, confirmPassword }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || 'Помилка скидання пароля',
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Помилка при скиданні пароля:', error);
+      return {
+        success: false,
+        error: 'Сталася помилка під час скидання пароля',
+      };
     }
   };
 
@@ -125,7 +263,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
       setUser(null);
+      // Перенаправлення на сторінку входу
+      router.push('/login');
     }
+  };
+
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
   };
 
   return (
@@ -136,7 +280,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         register,
         logout,
+        resetPassword,
+        resetPasswordConfirm,
         isAuthenticated: !!user,
+        updateUser,
       }}
     >
       {children}
