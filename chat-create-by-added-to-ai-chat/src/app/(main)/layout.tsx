@@ -7,7 +7,7 @@ import { Button } from '@/shared/components/ui/button';
 import { useUser } from '@/domains/user/presentation/hooks/useUser';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +24,18 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { theme, setTheme } = useTheme();
+  const [hasAccessToken, setHasAccessToken] = useState(false);
+
+  // Перевірка localStorage в useEffect (тільки на клієнті)
+  useEffect(() => {
+    console.log('MainLayout - Auth state:', {
+      user,
+      isAuthenticated: !!user,
+      hasAccessToken: !!localStorage.getItem('accessToken'),
+    });
+
+    setHasAccessToken(!!localStorage.getItem('accessToken'));
+  }, [user]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);

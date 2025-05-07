@@ -44,33 +44,14 @@ export default function LoginForm() {
     console.log('Починаємо процес входу');
 
     try {
-      console.log('Відправляємо запит на /api/auth/login');
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: data.email, password: data.password }),
-      });
+      // Використовуємо функцію login з хука useAuth
+      const result = await login(data.email, data.password);
 
-      console.log('Отримано відповідь:', response.status);
-
-      const responseData = await response.json();
-      console.log('Дані відповіді:', responseData);
-
-      if (!response.ok) {
-        console.error('Помилка входу:', responseData.error);
-        throw new Error(responseData.error || 'Помилка входу в систему');
+      if (!result.success) {
+        throw new Error(result.error || 'Помилка входу в систему');
       }
 
-      console.log('Зберігаємо токени в localStorage');
-      localStorage.setItem('accessToken', responseData.tokens.accessToken);
-      localStorage.setItem('refreshToken', responseData.tokens.refreshToken);
-
-      console.log('Оновлюємо стан користувача');
-      setUser(responseData.user);
-
-      console.log('Перенаправляємо на /chat');
+      console.log('Успішний вхід, перенаправляємо на /chat');
       router.push('/chat');
       return { success: true };
     } catch (error) {

@@ -22,14 +22,17 @@ const publicRoutes = [
 // Шляхи, які починаються з цих префіксів, також публічні
 const publicPrefixes = ['/auth/', '/_next/', '/favicon.ico', '/assets/'];
 
+// src/middleware.ts
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  console.log('Middleware running for path:', pathname);
 
   // Перевірка чи це публічний маршрут
   if (
     publicRoutes.includes(pathname) ||
     publicPrefixes.some(prefix => pathname.startsWith(prefix))
   ) {
+    console.log('Public route, skipping auth check');
     return NextResponse.next();
   }
 
@@ -41,7 +44,15 @@ export async function middleware(req: NextRequest) {
   const cookieToken = req.cookies.get('accessToken')?.value;
   const accessToken = token || cookieToken;
 
+  // console.log('Middleware auth check:', {
+  //   hasAuthHeader: !!authHeader,
+  //   hasToken: !!token,
+  //   hasCookieToken: !!cookieToken,
+  //   hasAccessToken: !!accessToken,
+  // });
+
   if (!accessToken) {
+    console.log('No access token found, redirecting to login');
     // Якщо це API запит, повертаємо 401
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -56,9 +67,16 @@ export async function middleware(req: NextRequest) {
   try {
     // Перевірка токена
     const jwtService = new JwtService();
+    console.log('Verifying token in middleware...');
     const payload = await jwtService.verifyAccessToken(accessToken);
 
+    console.log('Token verification result:', {
+      isValid: !!payload && !!payload.userId,
+      userId: payload?.userId,
+    });
+
     if (!payload || !payload.userId) {
+      console.log('Invalid token payload, redirecting to login');
       // Якщо це API запит, повертаємо 401
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
@@ -73,9 +91,8 @@ export async function middleware(req: NextRequest) {
     // Додаємо інформацію про користувача до запиту
     const requestHeaders = new Headers(req.headers);
     requestHeaders.set('x-user-id', payload.userId);
-    if (payload.role) {
-      requestHeaders.set('x-user-role', payload.role);
-    }
+
+    console.log('Auth successful, continuing to route');
 
     // Продовжуємо обробку запиту
     return NextResponse.next({

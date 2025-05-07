@@ -57,10 +57,13 @@ export class JwtService {
    */
   async verifyAccessToken(token: string): Promise<CustomJWTPayload | null> {
     try {
+      // console.log('JwtService: Verifying token...');
       const { payload } = await jwtVerify(token, this.accessTokenSecret);
 
-      // Перевіряємо, чи є в payload необхідні поля
+      // console.log('JwtService: Verification result:', payload);
+
       if (!payload || typeof payload.userId !== 'string') {
+        console.error('JwtService: Invalid payload:', payload);
         return null;
       }
 
@@ -70,7 +73,7 @@ export class JwtService {
         role: payload.role as string | undefined,
       };
     } catch (error) {
-      console.error('Access token verification failed:', error);
+      console.error('JwtService: Verification failed:', error);
       return null;
     }
   }

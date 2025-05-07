@@ -115,7 +115,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false;
     }
   };
-
+  // Додайте цей код після визначення станів
+  // useEffect(() => {
+  //   console.log('Auth state changed:', {
+  //     user,
+  //     isAuthenticated: !!user,
+  //     loading,
+  //   });
+  // }, [user, loading]);
+  // В AuthProvider.tsx у функції login
   const login = async (email: string, password: string) => {
     try {
       const response = await fetch('/api/auth/login', {
@@ -135,11 +143,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      // Зберігаємо токени
+      // Зберігаємо токени в localStorage (для клієнтських запитів)
       localStorage.setItem('accessToken', data.tokens.accessToken);
       localStorage.setItem('refreshToken', data.tokens.refreshToken);
 
-      // Встановлюємо користувача
+      // Зберігаємо accessToken у cookie для middleware (для серверних запитів)
+      document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+      // Встановлюємо користувача в стан
       setUser(data.user);
 
       return { success: true };
@@ -245,6 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // В AuthProvider.tsx, у функції logout
   const logout = async (): Promise<void> => {
     try {
       const accessToken = localStorage.getItem('accessToken');
@@ -262,6 +274,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Видаляємо токени навіть при помилці
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
+
+      // Видаляємо cookie
+      document.cookie = 'accessToken=; path=/; max-age=0; samesite=strict';
+
       setUser(null);
       // Перенаправлення на сторінку входу
       router.push('/login');
