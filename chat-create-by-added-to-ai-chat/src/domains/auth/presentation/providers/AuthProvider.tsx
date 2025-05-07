@@ -36,48 +36,69 @@ type AuthContextType = {
   }>;
   isAuthenticated: boolean;
   updateUser: (user: User) => void;
+  sensitiveRequest: (url: string, data: any) => Promise<Response | null>;
+  authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response | null>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Генерація CSRF-токена
+const generateCsrfToken = () => {
+  const token = Math.random().toString(36).substring(2);
+  localStorage.setItem('csrfToken', token);
+  return token;
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
+  // Перевірка автентифікації при завантаженні
   useEffect(() => {
-    // Перевіряємо, чи є токен у localStorage
-    const accessToken = localStorage.getItem('accessToken');
+    const checkAuth = async () => {
+      // Перевіряємо, чи є токен у localStorage
+      const accessToken = localStorage.getItem('accessToken');
 
-    if (accessToken) {
-      // Спробуємо отримати дані користувача
-      fetch('/api/auth/me', {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      })
-        .then(res => {
-          if (res.ok) return res.json();
-          throw new Error('Помилка авторизації');
-        })
-        .then(data => {
-          setUser(data.user);
-        })
-        .catch(() => {
-          // Якщо помилка - видаляємо токен і пробуємо оновити через refresh token
-          refreshToken().catch(() => {
-            // Якщо не вдалося оновити, видаляємо все
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
+      if (accessToken) {
+        try {
+          // Отримуємо дані користувача
+          const res = await fetch('/api/auth/me', {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
           });
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    } else {
+
+          if (res.ok) {
+            const data = await res.json();
+            setUser(data.user);
+          } else {
+            // Якщо токен недійсний, спробуємо оновити
+            const refreshed = await refreshToken();
+            if (!refreshed) {
+              clearAuthData();
+            }
+          }
+        } catch (error) {
+          console.error('Помилка перевірки автентифікації:', error);
+          clearAuthData();
+        }
+      }
+
       setLoading(false);
-    }
+    };
+
+    checkAuth();
   }, []);
+
+  // Допоміжна функція для очищення даних автентифікації
+  const clearAuthData = () => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('csrfToken');
+    document.cookie = 'accessToken=; path=/; max-age=0; samesite=strict';
+    setUser(null);
+  };
 
   const refreshToken = async (): Promise<boolean> => {
     const refreshToken = localStorage.getItem('refreshToken');
@@ -97,6 +118,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
       localStorage.setItem('accessToken', data.accessToken);
 
+      // Також оновлюємо cookie
+      document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+
       // Отримуємо дані користувача з оновленим токеном
       const userResponse = await fetch('/api/auth/me', {
         headers: {
@@ -115,15 +139,179 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false;
     }
   };
-  // Додайте цей код після визначення станів
-  // useEffect(() => {
-  //   console.log('Auth state changed:', {
-  //     user,
-  //     isAuthenticated: !!user,
-  //     loading,
-  //   });
-  // }, [user, loading]);
-  // В AuthProvider.tsx у функції login
+
+  // Функція для перевірки та оновлення токена
+  const refreshTokenIfNeeded = async () => {
+    try {
+      const accessToken = localStorage.getItem('accessToken');
+      if (!accessToken) return;
+
+      // Розбір JWT без бібліотеки (спрощено)
+      const payload = JSON.parse(atob(accessToken.split('.')[1]));
+      const expiresAt = payload.exp * 1000; // перетворюємо у мілісекунди
+
+      // Якщо до закінчення терміну менше 5 хвилин, оновлюємо токен
+      if (expiresAt - Date.now() < 5 * 60 * 1000) {
+        const response = await fetch('/api/auth/refresh-token', {
+          method: 'POST',
+          credentials: 'include', // Важливо для надсилання cookies
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          localStorage.setItem('accessToken', data.accessToken);
+          document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+          // Якщо сторінка оновлюється або відкривається нова вкладка,
+          // це допоможе зберегти консистентний стан автентифікації
+          if (!user) {
+            const userResponse = await fetch('/api/auth/me', {
+              headers: {
+                Authorization: `Bearer ${data.accessToken}`,
+              },
+            });
+
+            if (userResponse.ok) {
+              const userData = await userResponse.json();
+              setUser(userData.user);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Помилка при оновленні токена:', error);
+    }
+  };
+
+  // Інтервал для перевірки та оновлення токена
+  useEffect(() => {
+    const interval = setInterval(refreshTokenIfNeeded, 60 * 1000); // Перевіряємо щохвилини
+
+    // Додаємо обробник зберігання для синхронізації між вкладками
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'accessToken' && !e.newValue && user) {
+        // Якщо токен видалено в іншій вкладці, виходимо і тут
+        clearAuthData();
+        router.push('/login');
+      } else if (e.key === 'accessToken' && e.newValue && !user) {
+        // Якщо токен з'явився в іншій вкладці, оновлюємо стан і тут
+        refreshTokenIfNeeded();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    // Очищення при розмонтуванні
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [user, router]);
+
+  // Захищений запит з CSRF захистом
+  const sensitiveRequest = async (url: string, data: any): Promise<Response | null> => {
+    const csrfToken = localStorage.getItem('csrfToken') || generateCsrfToken();
+    const accessToken = localStorage.getItem('accessToken');
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+          Authorization: accessToken ? `Bearer ${accessToken}` : '',
+        },
+        credentials: 'include', // Включаємо cookies
+        body: JSON.stringify(data),
+      });
+
+      // Обробка помилок автентифікації
+      if (response.status === 401) {
+        // Спробуємо оновити токен
+        const refreshSuccessful = await refreshToken();
+
+        if (refreshSuccessful) {
+          // Повторюємо запит з новим токеном
+          const newAccessToken = localStorage.getItem('accessToken');
+          return fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': csrfToken,
+              Authorization: `Bearer ${newAccessToken}`,
+            },
+            credentials: 'include',
+            body: JSON.stringify(data),
+          });
+        } else {
+          // Якщо не вдалося оновити токен, очищаємо дані автентифікації
+          handleAuthError();
+          return null;
+        }
+      }
+
+      return response;
+    } catch (error) {
+      console.error('Помилка при виконанні захищеного запиту:', error);
+      return null;
+    }
+  };
+
+  // Обгортка для fetch з автентифікацією та обробкою помилок
+  const authenticatedFetch = async (
+    url: string,
+    options: RequestInit = {}
+  ): Promise<Response | null> => {
+    const accessToken = localStorage.getItem('accessToken');
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          Authorization: accessToken ? `Bearer ${accessToken}` : '',
+        },
+        credentials: 'include', // Включаємо cookies
+      });
+
+      // Якщо отримуємо 401, спробуємо оновити токен
+      if (response.status === 401) {
+        const refreshSuccessful = await refreshToken();
+
+        if (refreshSuccessful) {
+          // Повторюємо запит з новим токеном
+          const newAccessToken = localStorage.getItem('accessToken');
+          return fetch(url, {
+            ...options,
+            headers: {
+              ...options.headers,
+              Authorization: `Bearer ${newAccessToken}`,
+            },
+            credentials: 'include',
+          });
+        } else {
+          // Якщо не вдалося оновити токен
+          handleAuthError();
+          return null;
+        }
+      }
+
+      return response;
+    } catch (error) {
+      console.error('Помилка при виконанні автентифікованого запиту:', error);
+      return null;
+    }
+  };
+
+  // Обробка помилок автентифікації
+  const handleAuthError = () => {
+    // Очищаємо дані автентифікації
+    clearAuthData();
+
+    // Перенаправляємо на сторінку логіну
+    router.push(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
+  };
+
   const login = async (email: string, password: string) => {
     try {
       const response = await fetch('/api/auth/login', {
@@ -146,6 +334,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Зберігаємо токени в localStorage (для клієнтських запитів)
       localStorage.setItem('accessToken', data.tokens.accessToken);
       localStorage.setItem('refreshToken', data.tokens.refreshToken);
+
+      // Генеруємо CSRF токен при логіні
+      generateCsrfToken();
 
       // Зберігаємо accessToken у cookie для middleware (для серверних запитів)
       document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
@@ -256,7 +447,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // В AuthProvider.tsx, у функції logout
   const logout = async (): Promise<void> => {
     try {
       const accessToken = localStorage.getItem('accessToken');
@@ -272,13 +462,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Помилка при виході:', error);
     } finally {
       // Видаляємо токени навіть при помилці
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
+      clearAuthData();
 
-      // Видаляємо cookie
-      document.cookie = 'accessToken=; path=/; max-age=0; samesite=strict';
-
-      setUser(null);
       // Перенаправлення на сторінку входу
       router.push('/login');
     }
@@ -300,6 +485,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resetPasswordConfirm,
         isAuthenticated: !!user,
         updateUser,
+        sensitiveRequest,
+        authenticatedFetch,
       }}
     >
       {children}
@@ -313,4 +500,32 @@ export function useAuth() {
     throw new Error('useAuth має використовуватись в AuthProvider');
   }
   return context;
+}
+
+// HOC для захисту маршрутів
+export function withAuth<P extends object>(Component: React.ComponentType<P>) {
+  return function AuthenticatedComponent(props: P) {
+    const { user, loading } = useAuth();
+    const router = useRouter();
+
+    useEffect(() => {
+      if (!loading && !user) {
+        router.push('/login');
+      }
+    }, [user, loading, router]);
+
+    if (loading) {
+      return (
+        <div className="flex justify-center items-center h-screen">
+          <div className="animate-spin rounded-full border-2 border-current border-t-transparent h-8 w-8"></div>
+        </div>
+      );
+    }
+
+    if (!user) {
+      return null;
+    }
+
+    return <Component {...props} />;
+  };
 }

@@ -40,13 +40,24 @@ export async function POST(req: NextRequest) {
         user: result.user,
         tokens: {
           accessToken: result.tokens.accessToken,
-          refreshToken: result.tokens.refreshToken,
+          // Не відправляємо refreshToken у відповіді, якщо встановлюємо як HttpOnly cookie
         },
       });
 
-      // Встановлюємо cookie для refresh токена
+      // AccessToken у звичайній cookie (доступний для JavaScript)
       response.cookies.set({
-        name: 'refresh-token',
+        name: 'accessToken',
+        value: result.tokens.accessToken,
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 15 * 60, // 15 хвилин
+      });
+
+      // RefreshToken у HttpOnly cookie (недоступний для JavaScript)
+      response.cookies.set({
+        name: 'refreshToken',
         value: result.tokens.refreshToken,
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',

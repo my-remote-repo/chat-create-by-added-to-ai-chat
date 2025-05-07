@@ -599,3 +599,655 @@ return NextResponse.json({ error: 'Token revoked' }, { status: 401 });
 Низька латентність: Швидка перевірка токенів не уповільнює відповіді API
 
 Ця система забезпечує надійну автентифікацію та авторизацію користувачів з підтримкою моментального анулювання токенів при логауті або підозрілій активності.
+
+======================================================================================================
+
+Система автентифікації в Next.js DDD Chat
+Загальний огляд архітектури
+Система автентифікації у Next.js DDD Chat побудована за принципами Domain-Driven Design (DDD) з чітким розділенням відповідальності між серверною та клієнтською частинами. Ця архітектура забезпечує високий рівень безпеки та зручний користувацький досвід.
+Ключові компоненти
+
+AuthProvider - центральний компонент, що керує станом автентифікації
+Middleware - серверний компонент для перевірки автентифікації запитів
+JWT Tokens - механізм токенів для автентифікації (access і refresh)
+Secure Storage - зберігання токенів у localStorage та cookies
+API Routes - ендпоінти для авторизаційних операцій
+HOC та Hooks - утиліти для захисту клієнтських маршрутів
+
+Процес автентифікації в деталях
+
+1.  Вхід користувача (Login)
+    Процес входу включає:
+    typescriptconst login = async (email: string, password: string) => {
+    try {
+    // 1. Відправка облікових даних на сервер
+    const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+    });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return { success: false, error: data.error || 'Помилка входу в систему' };
+        }
+
+        // 2. Отримання та зберігання токенів
+        localStorage.setItem('accessToken', data.tokens.accessToken);  // Для клієнтських запитів
+        localStorage.setItem('refreshToken', data.tokens.refreshToken); // Для оновлення сесії
+
+        // 3. Генерація CSRF токена для захисту від CSRF атак
+        generateCsrfToken();
+
+        // 4. Зберігання accessToken у cookie для middleware (серверна автентифікація)
+        document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+        // 5. Оновлення стану користувача в контексті React
+        setUser(data.user);
+
+        return { success: true };
+
+    } catch (error) {
+    console.error('Помилка при вході:', error);
+    return { success: false, error: 'Сталася помилка під час входу в систему' };
+    }
+    };
+    Важливі аспекти:
+
+Токени зберігаються в двох місцях:
+
+localStorage для клієнтських запитів через JavaScript
+cookies для серверних запитів через middleware
+
+Використовується samesite=strict для cookies, щоб запобігти CSRF атакам
+Генерується CSRF токен для додаткового захисту важливих операцій
+
+2. Захист маршрутів (Route Protection)
+   Серверний захист через Middleware
+   typescript// middleware.ts
+   export async function middleware(req: NextRequest) {
+   const pathname = req.nextUrl.pathname;
+
+// 1. Перевірка чи шлях публічний (не потребує автентифікації)
+if (publicRoutes.includes(pathname) || publicPrefixes.some(prefix => pathname.startsWith(prefix))) {
+return NextResponse.next();
+}
+
+// 2. Отримання токена з cookies (серверна перевірка)
+const accessToken = req.cookies.get('accessToken')?.value;
+
+if (!accessToken) {
+// 3. Перенаправлення на сторінку входу, якщо токен відсутній
+if (pathname.startsWith('/api/')) {
+return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+    const url = new URL('/login', req.url);
+    url.searchParams.set('returnUrl', pathname);
+    return NextResponse.redirect(url);
+
+}
+
+// 4. Перевірка валідності токена через JWT Service
+try {
+const jwtService = new JwtService();
+const payload = await jwtService.verifyAccessToken(accessToken);
+
+    if (!payload || !payload.userId) {
+      // Токен невалідний - перенаправлення на логін
+      throw new Error('Invalid token');
+    }
+
+    // 5. Додавання інформації про користувача до запиту
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-user-id', payload.userId);
+
+    // 6. Продовження обробки запиту
+    return NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+
+} catch (error) {
+// 7. Обробка помилок автентифікації
+if (pathname.startsWith('/api/')) {
+return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+}
+const url = new URL('/login', req.url);
+url.searchParams.set('returnUrl', pathname);
+return NextResponse.redirect(url);
+}
+}
+Клієнтський захист через HOC
+typescript// HOC для захисту клієнтських маршрутів
+export function withAuth<P extends object>(Component: React.ComponentType<P>) {
+return function AuthenticatedComponent(props: P) {
+const { user, loading } = useAuth();
+const router = useRouter();
+
+    // 1. Перевірка автентифікації при рендерингу компонента
+    useEffect(() => {
+      if (!loading && !user) {
+        router.push('/login');
+      }
+    }, [user, loading, router]);
+
+    // 2. Показ індикатора завантаження
+    if (loading) {
+      return <div className="flex justify-center items-center h-screen">
+        <div className="animate-spin rounded-full border-2 border-current border-t-transparent h-8 w-8"></div>
+      </div>;
+    }
+
+    // 3. Якщо користувач не автентифікований - не рендеримо компонент
+    if (!user) {
+      return null;
+    }
+
+    // 4. Якщо користувач автентифікований - рендеримо компонент з пропсами
+    return <Component {...props} />;
+
+};
+}
+
+// Використання:
+function ProfilePage() { /_ ... _/ }
+export default withAuth(ProfilePage); 3. Автоматичне оновлення токену (Token Refresh)
+Система включає автоматичне оновлення токенів, щоб користувач залишався автентифікованим без необхідності ручного повторного входу:
+typescript// Функція для перевірки та оновлення токена
+const refreshTokenIfNeeded = async () => {
+try {
+const accessToken = localStorage.getItem('accessToken');
+if (!accessToken) return;
+
+    // 1. Розбір JWT без бібліотеки для отримання терміну дії
+    const payload = JSON.parse(atob(accessToken.split('.')[1]));
+    const expiresAt = payload.exp * 1000; // перетворюємо у мілісекунди
+
+    // 2. Якщо до закінчення терміну менше 5 хвилин, оновлюємо токен
+    if (expiresAt - Date.now() < 5 * 60 * 1000) {
+      const response = await fetch('/api/auth/refresh-token', {
+        method: 'POST',
+        credentials: 'include', // Важливо для надсилання cookies
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+
+        // 3. Оновлюємо токени в localStorage і cookies
+        localStorage.setItem('accessToken', data.accessToken);
+        document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+        // 4. Якщо сторінка відкривається в новій вкладці - оновлюємо стан користувача
+        if (!user) {
+          const userResponse = await fetch('/api/auth/me', {
+            headers: { Authorization: `Bearer ${data.accessToken}` },
+          });
+
+          if (userResponse.ok) {
+            const userData = await userResponse.json();
+            setUser(userData.user);
+          }
+        }
+      }
+    }
+
+} catch (error) {
+console.error('Помилка при оновленні токена:', error);
+}
+};
+
+// Запуск оновлення за розкладом
+useEffect(() => {
+const interval = setInterval(refreshTokenIfNeeded, 60 \* 1000); // Перевіряємо щохвилини
+
+// Додаємо обробник зберігання для синхронізації між вкладками
+const handleStorageChange = (e: StorageEvent) => {
+if (e.key === 'accessToken' && !e.newValue && user) {
+// Вихід з системи в іншій вкладці
+clearAuthData();
+router.push('/login');
+} else if (e.key === 'accessToken' && e.newValue && !user) {
+// Вхід в іншій вкладці
+refreshTokenIfNeeded();
+}
+};
+
+window.addEventListener('storage', handleStorageChange);
+
+return () => {
+clearInterval(interval);
+window.removeEventListener('storage', handleStorageChange);
+};
+}, [user, router]); 4. Захист від CSRF атак
+Cross-Site Request Forgery (CSRF) - це тип атаки, коли зловмисний сайт змушує браузер користувача виконувати небажані дії на сайті, де користувач автентифікований. Наша система має захист від цього:
+typescript// Генерація CSRF-токена
+const generateCsrfToken = () => {
+const token = Math.random().toString(36).substring(2);
+localStorage.setItem('csrfToken', token);
+return token;
+};
+
+// Захищений запит з CSRF захистом
+const sensitiveRequest = async (url: string, data: any): Promise<Response | null> => {
+const csrfToken = localStorage.getItem('csrfToken') || generateCsrfToken();
+const accessToken = localStorage.getItem('accessToken');
+
+try {
+// 1. Додаємо CSRF токен до заголовків запиту
+const response = await fetch(url, {
+method: 'POST',
+headers: {
+'Content-Type': 'application/json',
+'X-CSRF-Token': csrfToken, // Важливо: серверний API повинен перевіряти цей токен
+'Authorization': accessToken ? `Bearer ${accessToken}` : '',
+},
+credentials: 'include',
+body: JSON.stringify(data),
+});
+
+    // 2. Обробка помилок автентифікації (401)
+    if (response.status === 401) {
+      const refreshSuccessful = await refreshToken();
+
+      if (refreshSuccessful) {
+        // 3. Повторюємо запит з новим токеном, якщо оновлення вдалося
+        const newAccessToken = localStorage.getItem('accessToken');
+        return fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken,
+            'Authorization': `Bearer ${newAccessToken}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify(data),
+        });
+      } else {
+        // 4. Перенаправляємо на логін, якщо оновлення не вдалося
+        handleAuthError();
+        return null;
+      }
+    }
+
+    return response;
+
+} catch (error) {
+console.error('Помилка при виконанні захищеного запиту:', error);
+return null;
+}
+};
+
+// Використання:
+const handleSubmit = async (formData) => {
+const response = await sensitiveRequest('/api/user/update-password', formData);
+if (response && response.ok) {
+// Обробка успішної відповіді
+}
+}; 5. Синхронізація стану між вкладками
+Важливий аспект зручності користування - синхронізація стану автентифікації між різними вкладками:
+typescript// Обробник події localStorage для синхронізації між вкладками
+const handleStorageChange = (e: StorageEvent) => {
+if (e.key === 'accessToken' && !e.newValue && user) {
+// Вихід з системи в іншій вкладці - виходимо і тут
+clearAuthData();
+router.push('/login');
+} else if (e.key === 'accessToken' && e.newValue && !user) {
+// Вхід в систему в іншій вкладці - входимо і тут
+refreshTokenIfNeeded();
+}
+};
+
+// Додавання обробника подій
+useEffect(() => {
+window.addEventListener('storage', handleStorageChange);
+return () => window.removeEventListener('storage', handleStorageChange);
+}, [user, router]); 6. Захищені запити з автентифікацією
+Для зручності виконання запитів, які потребують автентифікації, реалізовано спеціальну обгортку:
+typescript// Обгортка для fetch з автентифікацією та обробкою помилок
+const authenticatedFetch = async (url: string, options: RequestInit = {}): Promise<Response | null> => {
+const accessToken = localStorage.getItem('accessToken');
+
+try {
+// 1. Додаємо токен до заголовків запиту
+const response = await fetch(url, {
+...options,
+headers: {
+...options.headers,
+Authorization: accessToken ? `Bearer ${accessToken}` : '',
+},
+credentials: 'include', // Включаємо cookies
+});
+
+    // 2. Якщо отримуємо 401, спробуємо оновити токен
+    if (response.status === 401) {
+      const refreshSuccessful = await refreshToken();
+
+      if (refreshSuccessful) {
+        // 3. Повторюємо запит з новим токеном
+        const newAccessToken = localStorage.getItem('accessToken');
+        return fetch(url, {
+          ...options,
+          headers: {
+            ...options.headers,
+            Authorization: `Bearer ${newAccessToken}`,
+          },
+          credentials: 'include',
+        });
+      } else {
+        // 4. Перенаправляємо на логін, якщо оновлення не вдалося
+        handleAuthError();
+        return null;
+      }
+    }
+
+    return response;
+
+} catch (error) {
+console.error('Помилка при виконанні автентифікованого запиту:', error);
+return null;
+}
+};
+
+// Використання:
+const fetchUserData = async () => {
+const response = await authenticatedFetch('/api/user/profile');
+if (response && response.ok) {
+const userData = await response.json();
+// Обробка даних
+}
+}; 7. Вихід з системи (Logout)
+Процес виходу з системи:
+typescriptconst logout = async (): Promise<void> => {
+try {
+const accessToken = localStorage.getItem('accessToken');
+
+    // 1. Викликаємо API для логауту (блокування токена на сервері)
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+} catch (error) {
+console.error('Помилка при виході:', error);
+} finally {
+// 2. Очищаємо токени та cookies навіть при помилці
+clearAuthData();
+
+    // 3. Перенаправляємо на сторінку входу
+    router.push('/login');
+
+}
+};
+
+// Допоміжна функція для очищення даних автентифікації
+const clearAuthData = () => {
+localStorage.removeItem('accessToken');
+localStorage.removeItem('refreshToken');
+localStorage.removeItem('csrfToken');
+document.cookie = 'accessToken=; path=/; max-age=0; samesite=strict';
+setUser(null);
+}; 8. Безпека токенів на сервері
+На серверній частині використовується чорний список (blacklist) для відкликаних токенів:
+typescript// api/auth/logout/route.ts
+export async function POST(req: NextRequest) {
+try {
+// Отримання токена авторизації
+const authHeader = req.headers.get('authorization');
+const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+    // Отримання refresh токена з кукі
+    const refreshToken = req.cookies.get('refresh-token')?.value;
+
+    if (!token) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Верифікуємо access токен
+    const jwtService = new JwtService();
+    const payload = await jwtService.verifyAccessToken(token);
+
+    if (!payload || !payload.userId) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    // Виходимо з системи, передаючи також access токен для чорного списку
+    await authService.logout(payload.userId, refreshToken, token);
+
+    // Очищаємо кукі
+    const response = NextResponse.json({ message: 'Logged out successfully' }, { status: 200 });
+    response.cookies.delete('refresh-token');
+
+    return response;
+
+} catch (error) {
+console.error('Logout error:', error);
+return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+}
+}
+
+// Перевірка чорного списку у middleware
+const isBlacklisted = await redisClient.isBlacklisted(token);
+if (isBlacklisted) {
+return { isAuthorized: false, error: 'Token revoked', statusCode: 401 };
+}
+Практичні сценарії використання
+
+1. Захист компонентів сторінок
+   tsx// src/app/(main)/profile/page.tsx
+   'use client';
+
+import { withAuth } from '@/domains/auth/presentation/providers/AuthProvider';
+import { ProfileForm } from '@/domains/user/presentation/components/ProfileForm';
+
+function ProfilePage() {
+return (
+<div className="container">
+<h1>Профіль користувача</h1>
+<ProfileForm />
+</div>
+);
+}
+
+// Захист сторінки від неавторизованого доступу
+export default withAuth(ProfilePage); 2. Виконання захищених запитів з оновленням токенів
+tsx// src/domains/user/presentation/components/ProfileForm.tsx
+'use client';
+
+import { useState } from 'react';
+import { useAuth } from '@/domains/auth/presentation/providers/AuthProvider';
+
+export function ProfileForm() {
+const [formData, setFormData] = useState({ name: '', email: '' });
+const { sensitiveRequest } = useAuth();
+
+const handleSubmit = async (e: React.FormEvent) => {
+e.preventDefault();
+
+    // Використання захищеного запиту з CSRF захистом і автоматичним оновленням токена
+    const response = await sensitiveRequest('/api/user/update-profile', formData);
+
+    if (response && response.ok) {
+      // Успішне оновлення профілю
+    }
+
+};
+
+return (
+<form onSubmit={handleSubmit}>
+{/_ форма редагування профілю _/}
+</form>
+);
+} 3. Отримання даних користувача з автентифікацією
+tsx// src/domains/user/presentation/hooks/useUser.ts
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/domains/auth/presentation/providers/AuthProvider';
+
+export function useUser() {
+const [profile, setProfile] = useState(null);
+const [loading, setLoading] = useState(true);
+const { user, authenticatedFetch } = useAuth();
+
+useEffect(() => {
+const fetchProfile = async () => {
+if (!user) {
+setLoading(false);
+return;
+}
+
+      // Використання автентифікованого запиту з автоматичним оновленням токена
+      const response = await authenticatedFetch('/api/user/profile');
+
+      if (response && response.ok) {
+        const data = await response.json();
+        setProfile(data);
+      }
+
+      setLoading(false);
+    };
+
+    fetchProfile();
+
+}, [user, authenticatedFetch]);
+
+return { profile, loading };
+} 4. Обробка вразливих операцій на сервері з CSRF захистом
+typescript// src/app/api/user/update-password/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { verifyTokenAndCheckBlacklist } from '@/lib/auth-helpers';
+
+export async function POST(req: NextRequest) {
+try {
+// 1. Перевірка автентифікації
+const authResult = await verifyTokenAndCheckBlacklist(req);
+if (!authResult.isAuthorized) {
+return NextResponse.json({ error: authResult.error }, { status: authResult.statusCode });
+}
+
+    // 2. Перевірка CSRF токена
+    const csrfToken = req.headers.get('x-csrf-token');
+    if (!csrfToken) {
+      return NextResponse.json({ error: 'CSRF token missing' }, { status: 403 });
+    }
+
+    // 3. Валідація даних запиту
+    const data = await req.json();
+    // ... логіка валідації ...
+
+    // 4. Оновлення пароля
+    const userService = ServiceFactory.createUserService();
+    const result = await userService.updatePassword(authResult.userId, data.currentPassword, data.newPassword);
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json({ message: 'Password updated successfully' });
+
+} catch (error) {
+console.error('Error updating password:', error);
+return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+}
+}
+Розширені можливості системи
+
+1.  Підтримка соціальних мереж
+    Система може бути розширена для підтримки входу через соціальні мережі (Google, Facebook, тощо):
+    typescript// Додавання методу для автентифікації через соціальні мережі
+    const loginWithSocialProvider = async (provider: 'google' | 'facebook') => {
+    try {
+    // Перенаправлення на ендпоінт соціальної автентифікації
+    window.location.href = `/api/auth/${provider}`;
+    return { success: true };
+    } catch (error) {
+    console.error(`Помилка входу через ${provider}:`, error);
+    return {
+    success: false,
+    error: `Сталася помилка під час входу через ${provider}`,
+    };
+    }
+    };
+2.  Багаторівнева автентифікація (MFA)
+    Підтримка багаторівневої автентифікації (2FA/MFA):
+    typescript// Розширення функції login для підтримки MFA
+    const login = async (email: string, password: string) => {
+    try {
+    const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+    });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return { success: false, error: data.error };
+        }
+
+        // Перевірка необхідності другого фактора автентифікації
+        if (data.requiresMfa) {
+          return {
+            success: true,
+            requiresMfa: true,
+            mfaToken: data.mfaToken // Тимчасовий токен для MFA процесу
+          };
+        }
+
+        // Стандартний процес входу, якщо MFA не потрібна
+        localStorage.setItem('accessToken', data.tokens.accessToken);
+        localStorage.setItem('refreshToken', data.tokens.refreshToken);
+        // ... інші операції ...
+
+        return { success: true };
+
+    } catch (error) {
+    console.error('Помилка при вході:', error);
+    return { success: false, error: 'Сталася помилка під час входу в систему' };
+    }
+    };
+
+// Функція для завершення MFA процесу
+const completeMfa = async (mfaToken: string, code: string) => {
+try {
+const response = await fetch('/api/auth/verify-mfa', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ mfaToken, code }),
+});
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return { success: false, error: data.error };
+    }
+
+    // Завершення процесу входу після успішної MFA
+    localStorage.setItem('accessToken', data.tokens.accessToken);
+    localStorage.setItem('refreshToken', data.tokens.refreshToken);
+    document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
+    setUser(data.user);
+
+    return { success: true };
+
+} catch (error) {
+console.error('Помилка при перевірці MFA:', error);
+return { success: false, error: 'Сталася помилка під час перевірки коду' };
+}
+};
+Висновок
+Система автентифікації Next.js DDD Chat забезпечує комплексний захист та зручність використання за допомогою:
+
+JWT токенів для безпечної автентифікації та авторизації
+Подвійного зберігання токенів (localStorage і cookies) для підтримки клієнтської та серверної автентифікації
+Захисту від CSRF атак через спеціальні токени та заголовки
+Автоматичного оновлення токенів для безперервної роботи користувача
+Синхронізації стану між вкладками для зручного користувацького досвіду
+Захищених HTTP запитів з автоматичною обробкою помилок автентифікації
+HOC компонентів для захисту маршрутів на клієнтській стороні
+Middleware для захисту API ендпоінтів на серверній стороні
+
+Ця архітектура надає гнучку, безпечну та масштабовану основу для авторизації в додатку, яка дотримується принципів Domain-Driven Design і забезпечує оптимальний баланс між безпекою та зручністю використання.
