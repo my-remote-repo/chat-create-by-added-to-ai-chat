@@ -41,19 +41,47 @@ export default function LoginForm() {
   const onSubmit = async (data: LoginFormValues) => {
     setIsSubmitting(true);
     setErrorMessage(null);
+    console.log('Починаємо процес входу');
 
     try {
-      const result = await login(data.email, data.password);
+      console.log('Відправляємо запит на /api/auth/login');
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: data.email, password: data.password }),
+      });
 
-      if (result.success) {
-        router.push('/chat');
-      } else {
-        setErrorMessage(result.error || 'Невірний email або пароль');
+      console.log('Отримано відповідь:', response.status);
+
+      const responseData = await response.json();
+      console.log('Дані відповіді:', responseData);
+
+      if (!response.ok) {
+        console.error('Помилка входу:', responseData.error);
+        throw new Error(responseData.error || 'Помилка входу в систему');
       }
+
+      console.log('Зберігаємо токени в localStorage');
+      localStorage.setItem('accessToken', responseData.tokens.accessToken);
+      localStorage.setItem('refreshToken', responseData.tokens.refreshToken);
+
+      console.log('Оновлюємо стан користувача');
+      setUser(responseData.user);
+
+      console.log('Перенаправляємо на /chat');
+      router.push('/chat');
+      return { success: true };
     } catch (error) {
-      setErrorMessage('Сталася помилка. Спробуйте пізніше.');
+      console.error('Помилка в процесі входу:', error);
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Сталася помилка під час входу в систему'
+      );
+      return { success: false, error: 'Сталася помилка під час входу в систему' };
     } finally {
       setIsSubmitting(false);
+      console.log('Завершено процес входу');
     }
   };
 
