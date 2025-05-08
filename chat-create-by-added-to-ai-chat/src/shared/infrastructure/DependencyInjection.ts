@@ -30,10 +30,16 @@ export class ServiceLocator {
     this.repositories.set('UserRepository', new PrismaUserRepository());
 
     // Імпортуємо сервіси динамічно, щоб уникнути циклічних залежностей
-    // Оновлено: використовуємо require() замість import()
+    // Оновлення для ChatService в ServiceLocator.registerDefaultDependencies
     try {
       const { ChatService } = require('@/domains/chat/application/services/chatService');
-      this.services.set('ChatService', new ChatService(this.getRepository('ChatRepository')));
+      this.services.set(
+        'ChatService',
+        new ChatService(
+          this.getRepository<ChatRepository>('ChatRepository'),
+          this.getRepository<MessageRepository>('MessageRepository')
+        )
+      );
     } catch (error) {
       console.error('Failed to load ChatService:', error);
       // Створюємо заглушку для ChatService
@@ -43,6 +49,9 @@ export class ServiceLocator {
         getUserChats: async () => [],
         createGroupChat: async () => ({}),
         createOrGetPersonalChat: async () => ({}),
+        deleteChat: async () => true,
+        getChatUnreadCounts: async () => ({}),
+        getTotalUnreadCount: async () => 0,
       });
     }
 

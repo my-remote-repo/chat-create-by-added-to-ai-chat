@@ -2,9 +2,13 @@ import { Chat, ChatDTO } from '../../domain/entities/chat';
 import { Participant } from '../../domain/entities/participant';
 import { ChatRepository } from '../../domain/repositories/chatRepository';
 import { redisClient } from '@/lib/redis-client';
+import { MessageRepository } from '@/domains/message/domain/repositories/messageRepository';
 
 export class ChatService {
-  constructor(private readonly chatRepository: ChatRepository) {}
+  constructor(
+    private readonly chatRepository: ChatRepository,
+    private readonly messageRepository: MessageRepository
+  ) {}
 
   /**
    * Отримати чат за ID
@@ -395,5 +399,54 @@ export class ChatService {
       notificationsEnabled: true,
       isArchived: false, // Додано пропущене поле
     });
+  }
+
+  /**
+   * Видалити чат
+   */
+  async deleteChat(chatId: string): Promise<boolean> {
+    try {
+      // Видаляємо чат
+      await this.chatRepository.delete(chatId);
+      return true;
+    } catch (error) {
+      console.error(`Error deleting chat ${chatId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Отримати статистику непрочитаних повідомлень для списку чатів
+   */
+  async getChatUnreadCounts(chatIds: string[], userId: string): Promise<Record<string, number>> {
+    const unreadCounts: Record<string, number> = {};
+
+    // Отримуємо кількість непрочитаних повідомлень для кожного чату
+    await Promise.all(
+      chatIds.map(async chatId => {
+        try {
+          const count = await this.messageRepository.countUnread(chatId, userId);
+          unreadCounts[chatId] = count;
+        } catch (error) {
+          console.error(`Error getting unread count for chat ${chatId}:`, error);
+          unreadCounts[chatId] = 0;
+        }
+      })
+    );
+
+    return unreadCounts;
+  }
+
+  /**
+   * Отримати загальну кількість непрочитаних повідомлень
+   */
+  async getTotalUnreadCount(userId: string): Promise<number> {
+    try {
+      const messageCounts = await this.messageRepository.countTotalUnread(userId);
+      return messageCounts;
+    } catch (error) {
+      console.error(`Error getting total unread count for user ${userId}:`, error);
+      return 0;
+    }
   }
 }
