@@ -1,7 +1,7 @@
 // src/shared/hooks/useTypingIndicator.ts
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSocketIo } from './useSocketIo';
 
 interface TypingUser {

@@ -6,15 +6,71 @@ import { JwtService } from '@/domains/auth/infrastructure/services/jwtService';
 import { MockRedisService } from '@/lib/mock-redis-client';
 import { describe, it, beforeAll, afterAll, jest, expect } from '@jest/globals';
 
+// Типи для повернених значень
+interface ChatItem {
+  id: string;
+  name: string;
+}
+
+interface ChatDetails {
+  id: string;
+  name: string;
+  participants: { userId: string }[];
+}
+
+interface Message {
+  id: string;
+  chatId: string;
+  userId: string;
+  content: string;
+  createdAt: Date;
+}
+
+// Інтерфейси для параметрів подій
+interface SendMessageData {
+  chatId: string;
+  content: string;
+}
+
+interface TypingData {
+  chatId: string;
+  isTyping: boolean;
+}
+
+interface ReadMessageData {
+  chatId: string;
+}
+
+// Інтерфейси для сервісів
+interface ChatService {
+  getUserChats: (userId: string) => Promise<ChatItem[]>;
+  getChatById: (chatId: string, userId: string) => Promise<ChatDetails | null>;
+  updateLastActivity: (chatId: string) => Promise<boolean>;
+}
+
+interface MessageService {
+  createMessage: (chatId: string, userId: string, content: string) => Promise<Message>;
+  markAllAsRead: (chatId: string, userId: string) => Promise<boolean>;
+}
+
+// Розширення інтерфейсу для MockRedisService
+interface ExtendedMockRedisService extends MockRedisService {
+  isBlacklisted: (token: string) => Promise<boolean>;
+  addUserToChat: (chatId: string, userId: string) => Promise<void>;
+  removeUserFromChat: (chatId: string, userId: string) => Promise<void>;
+}
+
 describe('Socket.io Server', () => {
   let server: Server;
   let io: SocketIOServer;
   let clientSocket1: ClientSocket;
   let clientSocket2: ClientSocket;
   let port: number;
-  let mockRedis: MockRedisService;
+  let mockRedis: ExtendedMockRedisService;
   let mockJwtService: JwtService;
   let mockToken: string;
+  let mockChatService: ChatService;
+  let mockMessageService: MessageService;
 
   beforeAll(done => {
     // Створення HTTP сервера
@@ -24,7 +80,7 @@ describe('Socket.io Server', () => {
     port = 3031;
 
     // Мокування Redis
-    mockRedis = new MockRedisService();
+    mockRedis = new MockRedisService() as ExtendedMockRedisService;
     jest.spyOn(mockRedis, 'setUserStatus').mockResolvedValue();
     jest.spyOn(mockRedis, 'getUserStatus').mockResolvedValue('online');
     jest.spyOn(mockRedis, 'isBlacklisted').mockResolvedValue(false);
@@ -39,36 +95,53 @@ describe('Socket.io Server', () => {
       email: 'test1@example.com',
     });
 
-    // Мокування сервісів
-    const mockChatService = {
-      getUserChats: jest.fn().mockResolvedValue([
+    // Створення функцій моків
+    const getUserChats = (userId: string): Promise<ChatItem[]> => {
+      return Promise.resolve([
         { id: 'chat-1', name: 'Test Chat 1' },
         { id: 'chat-2', name: 'Test Chat 2' },
-      ]),
-      getChatById: jest.fn().mockImplementation((chatId, userId) => {
-        if (chatId === 'chat-1' || chatId === 'chat-2') {
-          return Promise.resolve({
-            id: chatId,
-            name: `Test Chat ${chatId.split('-')[1]}`,
-            participants: [{ userId: 'test-user-1' }, { userId: 'test-user-2' }],
-          });
-        }
-        return Promise.resolve(null);
-      }),
-      updateLastActivity: jest.fn().mockResolvedValue(true),
+      ]);
     };
 
-    const mockMessageService = {
-      createMessage: jest.fn().mockImplementation((chatId, userId, content) => {
+    const getChatById = (chatId: string, userId: string): Promise<ChatDetails | null> => {
+      if (chatId === 'chat-1' || chatId === 'chat-2') {
         return Promise.resolve({
-          id: `msg-${Date.now()}`,
-          chatId,
-          userId,
-          content,
-          createdAt: new Date(),
+          id: chatId,
+          name: `Test Chat ${chatId.split('-')[1]}`,
+          participants: [{ userId: 'test-user-1' }, { userId: 'test-user-2' }],
         });
-      }),
-      markAllAsRead: jest.fn().mockResolvedValue(true),
+      }
+      return Promise.resolve(null);
+    };
+
+    const updateLastActivity = (chatId: string): Promise<boolean> => {
+      return Promise.resolve(true);
+    };
+
+    const createMessage = (chatId: string, userId: string, content: string): Promise<Message> => {
+      return Promise.resolve({
+        id: `msg-${Date.now()}`,
+        chatId,
+        userId,
+        content,
+        createdAt: new Date(),
+      });
+    };
+
+    const markAllAsRead = (chatId: string, userId: string): Promise<boolean> => {
+      return Promise.resolve(true);
+    };
+
+    // Створення моків з правильними типами
+    mockChatService = {
+      getUserChats: jest.fn(getUserChats),
+      getChatById: jest.fn(getChatById),
+      updateLastActivity: jest.fn(updateLastActivity),
+    };
+
+    mockMessageService = {
+      createMessage: jest.fn(createMessage),
+      markAllAsRead: jest.fn(markAllAsRead),
     };
 
     // Мокування фабрики сервісів
@@ -138,7 +211,7 @@ describe('Socket.io Server', () => {
       });
 
       // Відправка повідомлення
-      socket.on('send-message', async data => {
+      socket.on('send-message', async (data: SendMessageData) => {
         try {
           const { chatId, content } = data;
 
@@ -159,7 +232,7 @@ describe('Socket.io Server', () => {
       });
 
       // Набір тексту
-      socket.on('typing', async data => {
+      socket.on('typing', async (data: TypingData) => {
         try {
           const { chatId, isTyping } = data;
 
@@ -176,7 +249,7 @@ describe('Socket.io Server', () => {
       });
 
       // Прочитання повідомлень
-      socket.on('read-message', async data => {
+      socket.on('read-message', async (data: ReadMessageData) => {
         try {
           const { chatId } = data;
 
@@ -250,7 +323,7 @@ describe('Socket.io Server', () => {
     });
 
     clientSocket1.on('connect_error', err => {
-      done.fail(`Connection error: ${err.message}`);
+      done(new Error(`Connection error: ${err.message}`));
     });
   });
 
