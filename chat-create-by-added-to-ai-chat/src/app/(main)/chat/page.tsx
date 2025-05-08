@@ -1,7 +1,9 @@
 // src/app/(main)/chat/page.tsx
 'use client';
 
-export default function ChatPage() {
+import { ChatList } from '@/domains/chat/presentation/components/ChatList';
+
+export default function ChatIndexPage() {
   return (
     <div className="flex flex-col items-center justify-center h-[calc(100vh-56px)] md:h-screen">
       <div className="text-center max-w-md p-4">
