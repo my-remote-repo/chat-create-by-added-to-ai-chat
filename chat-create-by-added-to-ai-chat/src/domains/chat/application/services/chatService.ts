@@ -59,6 +59,38 @@ export class ChatService {
   }
 
   /**
+   * Оновити час останньої активності чату
+   */
+  // Виправлення методу updateLastActivity в ChatService
+  async updateLastActivity(chatId: string): Promise<boolean> {
+    try {
+      const chat = await this.chatRepository.findById(chatId);
+
+      if (!chat) {
+        return false;
+      }
+
+      // Створюємо новий об'єкт чату з тими ж даними, але з оновленою датою
+      const updatedChat = new Chat({
+        id: chat.id,
+        name: chat.name,
+        description: chat.description,
+        isGroup: chat.isGroup,
+        ownerId: chat.ownerId,
+        createdAt: chat.createdAt,
+        updatedAt: new Date(), // Оновлюємо тільки це поле
+        participants: chat.participants,
+      });
+
+      await this.chatRepository.update(updatedChat);
+      return true;
+    } catch (error) {
+      console.error(`Error updating chat activity for chat ${chatId}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Створити новий груповий чат
    */
   async createGroupChat(

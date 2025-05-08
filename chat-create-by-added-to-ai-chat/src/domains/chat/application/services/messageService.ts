@@ -49,19 +49,24 @@ export class MessageService {
    * Отримати повідомлення за ID
    */
   async getMessageById(messageId: string, userId: string): Promise<MessageDTO | null> {
-    const message = await this.messageRepository.findById(messageId);
+    try {
+      const message = await this.messageRepository.findById(messageId);
 
-    if (!message) {
+      if (!message) {
+        return null;
+      }
+
+      // Перевірка, чи є користувач учасником чату
+      const isParticipant = await this.chatRepository.isParticipant(message.chatId, userId);
+      if (!isParticipant) {
+        return null; // Користувач не має доступу до повідомлення
+      }
+
+      return message.toDTO();
+    } catch (error) {
+      console.error('Error fetching message:', error);
       return null;
     }
-
-    // Перевірка, чи є користувач учасником чату
-    const isParticipant = await this.chatRepository.isParticipant(message.chatId, userId);
-    if (!isParticipant) {
-      return null; // Користувач не має доступу до повідомлення
-    }
-
-    return message.toDTO();
   }
 
   /**
@@ -78,37 +83,42 @@ export class MessageService {
       search?: string;
     } = {}
   ): Promise<MessageDTO[]> {
-    // Перевірка, чи є користувач учасником чату
-    const isParticipant = await this.chatRepository.isParticipant(chatId, userId);
-    if (!isParticipant) {
-      return []; // Користувач не має доступу до чату
-    }
-
-    // Отримуємо повідомлення
-    const messages = await this.messageRepository.findMessages({
-      chatId,
-      limit: options.limit,
-      before: options.before,
-      after: options.after,
-      cursor: options.cursor,
-      searchText: options.search,
-    });
-
-    // Позначаємо повідомлення як прочитані
-    for (const msg of messages) {
-      if (!msg.isReadBy(userId)) {
-        await this.messageRepository.markAsRead(msg.id, userId);
+    try {
+      // Перевірка, чи є користувач учасником чату
+      const isParticipant = await this.chatRepository.isParticipant(chatId, userId);
+      if (!isParticipant) {
+        return []; // Користувач не має доступу до чату
       }
-    }
 
-    // Оновлюємо час останнього прочитання для учасника
-    const participant = await this.chatRepository.findParticipant(chatId, userId);
-    if (participant) {
-      const updatedParticipant = participant.markAsRead();
-      await this.chatRepository.updateParticipant(updatedParticipant);
-    }
+      // Отримуємо повідомлення
+      const messages = await this.messageRepository.findMessages({
+        chatId,
+        limit: options.limit,
+        before: options.before,
+        after: options.after,
+        cursor: options.cursor,
+        searchText: options.search,
+      });
 
-    return messages.map(msg => msg.toDTO());
+      // Автоматично позначаємо отримані повідомлення як прочитані
+      for (const msg of messages) {
+        if (!msg.isReadBy(userId)) {
+          await this.messageRepository.markAsRead(msg.id, userId);
+        }
+      }
+
+      // Оновлюємо час останнього прочитання для учасника
+      const participant = await this.chatRepository.findParticipant(chatId, userId);
+      if (participant) {
+        const updatedParticipant = participant.markAsRead();
+        await this.chatRepository.updateParticipant(updatedParticipant);
+      }
+
+      return messages.map(msg => msg.toDTO());
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+      return [];
+    }
   }
 
   /**
@@ -195,109 +205,102 @@ export class MessageService {
     userId: string,
     content: string
   ): Promise<MessageDTO | null> {
-    // Отримуємо повідомлення
-    const message = await this.messageRepository.findById(messageId);
+    try {
+      // Отримуємо повідомлення
+      const message = await this.messageRepository.findById(messageId);
 
-    if (!message) {
+      if (!message) {
+        return null;
+      }
+
+      // Перевірка, чи є користувач автором повідомлення
+      if (message.userId !== userId) {
+        return null; // Тільки автор може редагувати повідомлення
+      }
+
+      // Перевірка, чи не видалене повідомлення
+      if (message.isDeleted) {
+        return null; // Не можна редагувати видалені повідомлення
+      }
+
+      // Редагуємо повідомлення
+      const updatedMessage = message.edit(content);
+
+      // Зберігаємо оновлене повідомлення
+      const savedMessage = await this.messageRepository.update(updatedMessage);
+
+      return savedMessage.toDTO();
+    } catch (error) {
+      console.error('Error editing message:', error);
       return null;
     }
-
-    // Перевірка, чи є користувач автором повідомлення
-    if (message.userId !== userId) {
-      return null; // Тільки автор може редагувати повідомлення
-    }
-
-    // Перевірка, чи не видалене повідомлення
-    if (message.isDeleted) {
-      return null; // Не можна редагувати видалені повідомлення
-    }
-
-    // Редагуємо повідомлення
-    const updatedMessage = message.edit(content);
-
-    // Зберігаємо оновлене повідомлення
-    const savedMessage = await this.messageRepository.update(updatedMessage);
-
-    // Надсилаємо сповіщення про оновлення повідомлення
-    this.notifyMessageUpdated({
-      id: savedMessage.id,
-      content: savedMessage.content,
-      chatId: savedMessage.chatId,
-      updatedAt: savedMessage.updatedAt,
-      userId: savedMessage.userId,
-    });
-
-    return savedMessage.toDTO();
   }
-
   /**
    * Видалити повідомлення
    */
   async deleteMessage(messageId: string, userId: string): Promise<boolean> {
-    // Отримуємо повідомлення
-    const message = await this.messageRepository.findById(messageId);
+    try {
+      // Отримуємо повідомлення
+      const message = await this.messageRepository.findById(messageId);
 
-    if (!message) {
+      if (!message) {
+        return false;
+      }
+
+      // Отримуємо чат
+      const chat = await this.chatRepository.findById(message.chatId);
+
+      if (!chat) {
+        return false;
+      }
+
+      // Перевірка прав: автор повідомлення, власник чату або адміністратор
+      const participant = chat.participants.find(p => p.userId === userId);
+      const canDelete =
+        message.userId === userId ||
+        chat.ownerId === userId ||
+        (participant && participant.isAdmin);
+
+      if (!canDelete) {
+        return false;
+      }
+
+      // Видаляємо повідомлення (soft delete)
+      await this.messageRepository.delete(messageId);
+
+      return true;
+    } catch (error) {
+      console.error('Error deleting message:', error);
       return false;
     }
-
-    // Отримуємо чат
-    const chat = await this.chatRepository.findById(message.chatId);
-
-    if (!chat) {
-      return false;
-    }
-
-    // Перевірка прав: автор повідомлення, власник чату або адміністратор
-    const participant = chat.participants.find(p => p.userId === userId);
-    const canDelete =
-      message.userId === userId || chat.ownerId === userId || (participant && participant.isAdmin);
-
-    if (!canDelete) {
-      return false;
-    }
-
-    // Видаляємо повідомлення (soft delete)
-    await this.messageRepository.delete(messageId);
-
-    // Надсилаємо сповіщення про видалення повідомлення
-    this.notifyMessageDeleted({
-      id: messageId,
-      chatId: message.chatId,
-      deletedBy: userId,
-    });
-
-    return true;
   }
 
   /**
    * Позначити всі повідомлення в чаті як прочитані
    */
   async markAllAsRead(chatId: string, userId: string): Promise<boolean> {
-    // Перевірка, чи є користувач учасником чату
-    const isParticipant = await this.chatRepository.isParticipant(chatId, userId);
-    if (!isParticipant) {
+    try {
+      // Перевірка, чи є користувач учасником чату
+      const isParticipant = await this.chatRepository.isParticipant(chatId, userId);
+      if (!isParticipant) {
+        return false;
+      }
+
+      // Позначаємо всі повідомлення як прочитані
+      await this.messageRepository.markAllAsRead(chatId, userId);
+
+      // Оновлюємо час останнього прочитання для учасника
+      const participant = await this.chatRepository.findParticipant(chatId, userId);
+      if (participant) {
+        const updatedParticipant = participant.markAsRead();
+        await this.chatRepository.updateParticipant(updatedParticipant);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
       return false;
     }
-
-    // Позначаємо всі повідомлення як прочитані
-    await this.messageRepository.markAllAsRead(chatId, userId);
-
-    // Оновлюємо час останнього прочитання для учасника
-    const participant = await this.chatRepository.findParticipant(chatId, userId);
-    if (participant) {
-      const updatedParticipant = participant.markAsRead();
-      await this.chatRepository.updateParticipant(updatedParticipant);
-    }
-
-    // Надсилаємо сповіщення про прочитані повідомлення
-    this.notifyMessagesRead({
-      chatId,
-      userId,
-      timestamp: new Date().toISOString(),
-    });
-
-    return true;
   }
 
   /**
