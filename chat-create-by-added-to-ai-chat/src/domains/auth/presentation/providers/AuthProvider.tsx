@@ -144,39 +144,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshTokenIfNeeded = async () => {
     try {
       const accessToken = localStorage.getItem('accessToken');
-      if (!accessToken) return;
+      if (!accessToken) {
+        console.log('No access token found, skipping refresh');
+        return;
+      }
 
       // Розбір JWT без бібліотеки (спрощено)
-      const payload = JSON.parse(atob(accessToken.split('.')[1]));
-      const expiresAt = payload.exp * 1000; // перетворюємо у мілісекунди
+      const parts = accessToken.split('.');
+      if (parts.length !== 3) {
+        console.error('Invalid access token format');
+        return;
+      }
 
-      // Якщо до закінчення терміну менше 5 хвилин, оновлюємо токен
-      if (expiresAt - Date.now() < 5 * 60 * 1000) {
-        const response = await fetch('/api/auth/refresh-token', {
-          method: 'POST',
-          credentials: 'include', // Важливо для надсилання cookies
-        });
+      try {
+        const payload = JSON.parse(atob(parts[1]));
+        const expiresAt = payload.exp * 1000; // перетворюємо у мілісекунди
+        const timeToExpire = expiresAt - Date.now();
 
-        if (response.ok) {
-          const data = await response.json();
-          localStorage.setItem('accessToken', data.accessToken);
-          document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+        console.log(`Access token expires in: ${Math.floor(timeToExpire / 1000)} seconds`);
 
-          // Якщо сторінка оновлюється або відкривається нова вкладка,
-          // це допоможе зберегти консистентний стан автентифікації
-          if (!user) {
-            const userResponse = await fetch('/api/auth/me', {
-              headers: {
-                Authorization: `Bearer ${data.accessToken}`,
-              },
-            });
+        // Якщо до закінчення терміну менше 5 хвилин, оновлюємо токен
+        if (timeToExpire < 5 * 60 * 1000) {
+          console.log('Token is about to expire, attempting refresh...');
 
-            if (userResponse.ok) {
-              const userData = await userResponse.json();
-              setUser(userData.user);
+          // Отримуємо refresh token
+          const refreshToken = localStorage.getItem('refreshToken');
+
+          if (!refreshToken) {
+            console.error('No refresh token available');
+            return;
+          }
+
+          console.log('Sending refresh token request...');
+
+          const response = await fetch('/api/auth/refresh-token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refreshToken }),
+            credentials: 'include', // Включаємо cookies
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Token refreshed successfully');
+
+            localStorage.setItem('accessToken', data.accessToken);
+            document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+            // Якщо сторінка оновлюється або відкривається нова вкладка,
+            // це допоможе зберегти консистентний стан автентифікації
+            if (!user) {
+              const userResponse = await fetch('/api/auth/me', {
+                headers: {
+                  Authorization: `Bearer ${data.accessToken}`,
+                },
+              });
+
+              if (userResponse.ok) {
+                const userData = await userResponse.json();
+                setUser(userData.user);
+              }
             }
+          } else {
+            console.error('Failed to refresh token:', await response.text());
           }
         }
+      } catch (error) {
+        console.error('Error parsing token payload:', error);
       }
     } catch (error) {
       console.error('Помилка при оновленні токена:', error);
@@ -314,6 +350,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     try {
+      console.log('Починаємо процес входу для:', email);
+
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
@@ -325,26 +363,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
 
       if (!response.ok) {
+        console.error('Невдалий вхід:', data.error);
         return {
           success: false,
           error: data.error || 'Помилка входу в систему',
         };
       }
 
-      // Зберігаємо токени в localStorage (для клієнтських запитів)
-      localStorage.setItem('accessToken', data.tokens.accessToken);
-      localStorage.setItem('refreshToken', data.tokens.refreshToken);
+      console.log('Автентифікація успішна, обробка токенів');
 
-      // Генеруємо CSRF токен при логіні
-      generateCsrfToken();
+      // Переконуємось, що токени існують перед збереженням
+      if (data.tokens && data.tokens.accessToken) {
+        // Безпечне збереження токенів у localStorage
+        try {
+          localStorage.setItem('accessToken', data.tokens.accessToken);
+          console.log('Access token збережено:', data.tokens.accessToken.substring(0, 10) + '...');
 
-      // Зберігаємо accessToken у cookie для middleware (для серверних запитів)
-      document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
+          if (data.tokens.refreshToken) {
+            localStorage.setItem('refreshToken', data.tokens.refreshToken);
+            console.log(
+              'Refresh token збережено:',
+              data.tokens.refreshToken.substring(0, 10) + '...'
+            );
+          } else {
+            console.warn('RefreshToken відсутній у відповіді');
+          }
+        } catch (storageError) {
+          console.error('Помилка при збереженні токенів у localStorage:', storageError);
+          // Продовжуємо виконання навіть при помилці localStorage
+        }
 
-      // Встановлюємо користувача в стан
-      setUser(data.user);
+        // Генеруємо CSRF токен при логіні
+        generateCsrfToken();
 
-      return { success: true };
+        // Зберігаємо токени в cookies
+        try {
+          document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
+
+          // Зберігаємо refreshToken в cookie також
+          if (data.tokens.refreshToken) {
+            document.cookie = `refreshToken=${data.tokens.refreshToken}; path=/; max-age=${30 * 24 * 60 * 60}; samesite=strict`;
+          }
+        } catch (cookieError) {
+          console.error('Помилка при встановленні cookie:', cookieError);
+        }
+
+        // Тестова перевірка збережених токенів
+        setTimeout(() => {
+          try {
+            const savedAccessToken = localStorage.getItem('accessToken');
+            const savedRefreshToken = localStorage.getItem('refreshToken');
+            console.log('Перевірка збережених токенів:', {
+              hasAccessToken: !!savedAccessToken,
+              accessTokenLength: savedAccessToken?.length,
+              hasRefreshToken: !!savedRefreshToken,
+              refreshTokenLength: savedRefreshToken?.length,
+            });
+          } catch (e) {
+            console.error('Помилка при перевірці токенів:', e);
+          }
+        }, 1000);
+
+        // Встановлюємо користувача в стан
+        setUser(data.user);
+
+        console.log('Процес входу завершено успішно');
+        return { success: true };
+      } else {
+        console.error('Отримано відповідь без валідних токенів:', data);
+        return {
+          success: false,
+          error: 'Отримано невалідні дані автентифікації',
+        };
+      }
     } catch (error) {
       console.error('Помилка при вході:', error);
       return {
@@ -353,6 +444,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
   };
+
+  // Безпечна робота з localStorage
+  const safeLocalStorage = {
+    get: (key: string): string | null => {
+      try {
+        return localStorage.getItem(key);
+      } catch (e) {
+        console.error(`Error getting ${key} from localStorage:`, e);
+        return null;
+      }
+    },
+    set: (key: string, value: string): boolean => {
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (e) {
+        console.error(`Error setting ${key} in localStorage:`, e);
+        return false;
+      }
+    },
+    remove: (key: string): boolean => {
+      try {
+        localStorage.removeItem(key);
+        return true;
+      } catch (e) {
+        console.error(`Error removing ${key} from localStorage:`, e);
+        return false;
+      }
+    },
+  };
+
+  // Потім використовуйте safeLocalStorage замість прямих викликів localStorage
 
   const register = async (
     name: string,

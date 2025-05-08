@@ -83,13 +83,21 @@ export class JwtService {
    */
   async verifyRefreshToken(token: string): Promise<CustomJWTPayload | null> {
     try {
+      console.log('Verifying refresh token...');
+      if (!token || token === 'undefined') {
+        console.error('Invalid token format:', token);
+        return null;
+      }
+
       const { payload } = await jwtVerify(token, this.refreshTokenSecret);
 
       // Перевіряємо, чи є в payload необхідні поля
       if (!payload || typeof payload.userId !== 'string') {
+        console.error('Invalid payload format:', payload);
         return null;
       }
 
+      console.log('Token verified successfully');
       return {
         userId: payload.userId as string,
         email: payload.email as string | undefined,
