@@ -442,6 +442,34 @@ export class RedisService implements IRedisService {
       })
     );
   }
+
+  // Додаємо метод для дублювання клієнта (необхідно для Redis адаптера Socket.io)
+  duplicateClient() {
+    return createClient({
+      url: process.env.REDIS_URL || 'redis://localhost:6379',
+    });
+  }
+
+  // Додаємо метод для керування часом онлайн користувачів
+  async trackUserOnlineTime(userId: string) {
+    await this.connect();
+    const key = `user:online:time:${userId}`;
+    const now = Date.now();
+    await this.client.set(key, now.toString());
+  }
+
+  // Метод для отримання часу, проведеного онлайн
+  async getUserOnlineTime(userId: string): Promise<number> {
+    await this.connect();
+    const key = `user:online:time:${userId}`;
+    const startTime = await this.client.get(key);
+
+    if (!startTime) return 0;
+
+    const start = parseInt(startTime);
+    const now = Date.now();
+    return now - start;
+  }
 }
 
 // Створюємо і експортуємо інстанс сервісу
