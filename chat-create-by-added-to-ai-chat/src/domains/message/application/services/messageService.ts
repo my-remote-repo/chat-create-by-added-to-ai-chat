@@ -284,6 +284,14 @@ export class MessageService {
         return false;
       }
 
+      // Перевіряємо, чи є непрочитані повідомлення
+      const unreadCount = await this.messageRepository.countUnread(chatId, userId);
+
+      // Якщо непрочитаних повідомлень немає, не робимо оновлень
+      if (unreadCount === 0) {
+        return true;
+      }
+
       // Позначаємо всі повідомлення як прочитані
       await this.messageRepository.markAllAsRead(chatId, userId);
 

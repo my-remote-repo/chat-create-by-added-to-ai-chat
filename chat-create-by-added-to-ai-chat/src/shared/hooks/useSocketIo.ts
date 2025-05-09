@@ -4,6 +4,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '@/domains/auth/presentation/providers/AuthProvider';
+// Додайте імпорт
+import { debounce } from 'lodash';
 
 interface UseSocketIoOptions {
   autoConnect?: boolean;
@@ -36,9 +38,10 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
         return null;
       }
 
-      // Створюємо нове з'єднання
+      // Створюємо нове з'єднання з незалежним Socket.io сервером
       const socketInstance = io({
-        path: '/api/socketio',
+        // Замість прямого шляху використовуємо URL-адресу Socket.io сервера
+        path: '/api/socketio', // NextJS буде переадресовувати запити на порт 3001
         auth: {
           token: accessToken,
           userId: user.id,
@@ -48,6 +51,7 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
         reconnection: true,
         reconnectionAttempts,
         reconnectionDelay,
+        transports: ['websocket', 'polling'], // Спочатку WebSocket, потім fallback на polling
       });
 
       // Налаштування обробників подій для стану з'єднання
@@ -241,9 +245,13 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
 
   // Позначення повідомлень як прочитаних
   const markMessagesAsRead = useCallback(
-    (chatId: string) => {
-      return emit('read-message', { chatId });
-    },
+    debounce(
+      (chatId: string) => {
+        return emit('read-message', { chatId });
+      },
+      1000,
+      { leading: true, trailing: true }
+    ),
     [emit]
   );
 

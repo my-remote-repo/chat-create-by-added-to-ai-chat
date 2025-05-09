@@ -7,6 +7,13 @@ import { User } from '@/domains/user/domain/entities/user';
 export class PrismaChatRepository implements ChatRepository {
   async findById(id: string, includeParticipants: boolean = true): Promise<Chat | null> {
     try {
+      // Перевірка, чи id є допустимим MongoDB ObjectID
+      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+      if (!isValidObjectId) {
+        console.warn(`Invalid ObjectID format: ${id}`);
+        return null;
+      }
+
       const chatData = await prisma.chat.findUnique({
         where: { id },
       });

@@ -14,6 +14,13 @@ export class ChatService {
    * Отримати чат за ID
    */
   async getChatById(chatId: string, userId: string): Promise<ChatDTO | null> {
+    // Перевірка, чи chatId є допустимим ObjectID
+    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(chatId);
+    if (!isValidObjectId) {
+      console.warn(`Invalid chatId format: ${chatId}`);
+      return null;
+    }
+
     const chat = await this.chatRepository.findById(chatId, true);
 
     if (!chat) {

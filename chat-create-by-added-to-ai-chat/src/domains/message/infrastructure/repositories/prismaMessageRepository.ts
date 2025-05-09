@@ -464,33 +464,41 @@ export class PrismaMessageRepository implements MessageRepository {
 
   async markAllAsRead(chatId: string, userId: string): Promise<void> {
     try {
-      const messages = await prisma.message.findMany({
+      // Спочатку перевіряємо, чи є повідомлення, які потрібно оновити
+      const unreadMessages = await prisma.message.findMany({
         where: {
           chatId,
-          isDeleted: false,
           NOT: {
             readBy: {
               has: userId,
             },
           },
+          userId: { not: userId }, // Виключаємо повідомлення, надіслані самим користувачем
         },
         select: {
           id: true,
-          readBy: true,
         },
       });
 
-      // Оновлюємо кожне повідомлення
-      for (const message of messages) {
-        await prisma.message.update({
-          where: { id: message.id },
-          data: {
-            readBy: {
-              push: userId,
-            },
-          },
-        });
+      // Якщо немає непрочитаних повідомлень, не виконуємо оновлення
+      if (unreadMessages.length === 0) {
+        return;
       }
+
+      // Оновлюємо тільки ті повідомлення, які ще не були прочитані
+      const messageIds = unreadMessages.map(msg => msg.id);
+
+      // Оновлюємо повідомлення пакетно
+      await prisma.message.updateMany({
+        where: {
+          id: { in: messageIds },
+        },
+        data: {
+          readBy: {
+            push: userId,
+          },
+        },
+      });
 
       // Оновлюємо час останнього прочитання для учасника
       await prisma.chatParticipant.update({

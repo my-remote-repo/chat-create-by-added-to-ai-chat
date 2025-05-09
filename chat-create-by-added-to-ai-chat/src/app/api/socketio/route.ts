@@ -1,33 +1,47 @@
 // src/app/api/socketio/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { initSocketServer } from '@/lib/socket';
+import { startSocketServer, getIOInstance } from '@/lib/socket-service';
+
+// Забезпечуємо, що Socket.io сервер запущений
+startSocketServer();
 
 export async function GET(req: NextRequest) {
   try {
-    // Шукаємо серверний сокет
-    const res = {} as any;
-    res.socket = {
-      server:
-        req.nextUrl.protocol === 'https:' ? globalThis.__httpsServer : globalThis.__httpServer,
-    };
+    // Отримуємо інстанс Socket.io
+    const io = getIOInstance();
 
-    // Ініціалізуємо Socket.io сервер
-    const io = await initSocketServer(req as any, res as any);
-
-    if (!io) {
-      return NextResponse.json({ error: 'Failed to initialize Socket.io server' }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Socket.io server is running',
-      clients: io.engine.clientsCount,
-    });
-  } catch (error) {
-    console.error('Socket.io initialization error:', error);
+    // Успішна відповідь з інформацією про сервер
     return NextResponse.json(
-      { success: false, error: 'Socket.io initialization error' },
-      { status: 500 }
+      {
+        success: true,
+        message: 'Socket.io server is running',
+        clients: io ? io.engine.clientsCount : 0,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        },
+      }
     );
+  } catch (error) {
+    console.error('Socket.io API error:', error);
+    return NextResponse.json({ success: false, error: 'Socket.io API error' }, { status: 500 });
   }
+}
+
+export async function OPTIONS(req: NextRequest) {
+  return NextResponse.json(
+    {},
+    {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+    }
+  );
 }
