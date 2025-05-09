@@ -15,18 +15,23 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
   const { autoConnect = true, reconnectionAttempts = 5, reconnectionDelay = 3000 } = options;
 
   const { user, isAuthenticated } = useAuth();
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reconnectCount = useRef(0);
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
-  const socketInstanceRef = useRef<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const manualDisconnect = useRef(false);
 
   // Ініціалізація WebSocket - виконується один раз
   const initSocket = useCallback(() => {
     // Запобігаємо повторному створенню сокета
-    if (socketInstanceRef.current) {
-      return socketInstanceRef.current;
+    if (socketRef.current) {
+      // Спробуємо повторно підключити якщо відключено
+      if (!socketRef.current.connected && !manualDisconnect.current) {
+        console.log('Socket exists but disconnected - reconnecting');
+        socketRef.current.connect();
+      }
+      return socketRef.current;
     }
 
     if (!isAuthenticated || !user) {
@@ -45,7 +50,7 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
       console.log('Initializing Socket.io connection...');
 
       // Підключаємось до сокета
-      const socketInstance = io({
+      const socket = io({
         path: '/api/socketio',
         auth: {
           token: accessToken,
@@ -60,28 +65,60 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
       });
 
       // Налаштовуємо обробники для стану з'єднання
-      socketInstance.on('connect', () => {
+      socket.on('connect', () => {
         console.log('Socket.io connected');
         setIsConnected(true);
         setError(null);
         reconnectCount.current = 0;
+        manualDisconnect.current = false;
       });
 
-      socketInstance.on('disconnect', reason => {
+      socket.on('disconnect', reason => {
         console.log(`Socket.io disconnected: ${reason}`);
         setIsConnected(false);
+
+        // Автоматична спроба повторного підключення, якщо не відключено вручну
+        if (!manualDisconnect.current && reconnectCount.current < reconnectionAttempts) {
+          reconnectCount.current++;
+
+          if (reconnectTimer.current) {
+            clearTimeout(reconnectTimer.current);
+          }
+
+          reconnectTimer.current = setTimeout(() => {
+            console.log(
+              `Attempting to reconnect (${reconnectCount.current}/${reconnectionAttempts})`
+            );
+            socket.connect();
+          }, reconnectionDelay);
+        }
       });
 
-      socketInstance.on('connect_error', err => {
+      socket.on('connect_error', err => {
         console.error('Socket.io connection error:', err);
         setError(`Connection error: ${err.message}`);
         setIsConnected(false);
+
+        // Також спробуємо повторно підключитися при помилці з'єднання
+        if (!manualDisconnect.current && reconnectCount.current < reconnectionAttempts) {
+          reconnectCount.current++;
+
+          if (reconnectTimer.current) {
+            clearTimeout(reconnectTimer.current);
+          }
+
+          reconnectTimer.current = setTimeout(() => {
+            console.log(
+              `Attempting to reconnect after error (${reconnectCount.current}/${reconnectionAttempts})`
+            );
+            socket.connect();
+          }, reconnectionDelay * reconnectCount.current); // Збільшуємо затримку з кожною спробою
+        }
       });
 
-      // Зберігаємо сокет у стані та рефі
-      setSocket(socketInstance);
-      socketInstanceRef.current = socketInstance;
-      return socketInstance;
+      // Зберігаємо сокет у рефі
+      socketRef.current = socket;
+      return socket;
     } catch (err) {
       console.error('Error initializing socket:', err);
       setError(`Initialization error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -91,41 +128,69 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
 
   // Підключаємось при першому рендері, якщо autoConnect=true
   useEffect(() => {
-    if (autoConnect && isAuthenticated && !socketInstanceRef.current) {
-      const newSocket = initSocket();
+    let mounted = true;
 
-      // Очищення при розмонтуванні
-      return () => {
-        if (newSocket) {
-          console.log('Disconnecting socket on cleanup');
-          newSocket.disconnect();
-          socketInstanceRef.current = null;
-          setSocket(null);
-          setIsConnected(false);
-        }
+    const connectSocket = () => {
+      if (autoConnect && isAuthenticated && !socketRef.current && mounted) {
+        const socket = initSocket();
 
-        if (reconnectTimer.current) {
-          clearTimeout(reconnectTimer.current);
+        if (socket) {
+          console.log('Socket connection initialized via useEffect');
         }
-      };
-    }
-  }, [autoConnect, isAuthenticated, initSocket]);
+      }
+    };
+
+    // Спробуємо ініціалізувати з'єднання
+    connectSocket();
+
+    // Також періодично перевіряємо з'єднання
+    const checkInterval = setInterval(() => {
+      if (mounted && isAuthenticated && !isConnected && !manualDisconnect.current) {
+        console.log('Connection check: socket not connected, trying to reconnect');
+        connectSocket();
+      }
+    }, 10000); // Перевіряємо кожні 10 секунд
+
+    // Очищення при розмонтуванні
+    return () => {
+      mounted = false;
+      clearInterval(checkInterval);
+
+      if (socketRef.current) {
+        console.log('Cleaning up socket connection');
+        manualDisconnect.current = true; // Позначаємо, що відключення вручну
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        setIsConnected(false);
+      }
+
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = null;
+      }
+    };
+  }, [autoConnect, isAuthenticated, initSocket, isConnected]);
 
   // Явне підключення до сокета
   const connect = useCallback(() => {
-    if (!socketInstanceRef.current && isAuthenticated) {
+    manualDisconnect.current = false; // Скидаємо прапорець ручного відключення
+
+    if (!socketRef.current && isAuthenticated) {
       return initSocket();
-    } else if (socketInstanceRef.current && !socketInstanceRef.current.connected) {
-      socketInstanceRef.current.connect();
-      return socketInstanceRef.current;
+    } else if (socketRef.current && !socketRef.current.connected) {
+      console.log('Manual reconnection attempt');
+      socketRef.current.connect();
+      return socketRef.current;
     }
-    return socketInstanceRef.current;
+    return socketRef.current;
   }, [isAuthenticated, initSocket]);
 
   // Відключення від сокета
   const disconnect = useCallback(() => {
-    if (socketInstanceRef.current) {
-      socketInstanceRef.current.disconnect();
+    if (socketRef.current) {
+      console.log('Manual disconnection');
+      manualDisconnect.current = true; // Позначаємо, що відключення вручну
+      socketRef.current.disconnect();
       setIsConnected(false);
     }
   }, []);
@@ -133,60 +198,65 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
   // Приєднання до кімнати чату
   const joinChat = useCallback(
     (chatId: string) => {
-      const currentSocket = socketInstanceRef.current || connect();
-      if (currentSocket && isConnected) {
+      const socket = socketRef.current || connect();
+      if (socket && socket.connected) {
         console.log(`Joining chat: ${chatId}`);
-        currentSocket.emit('join-chat', chatId);
+        socket.emit('join-chat', chatId);
         return true;
       } else {
         console.warn('Cannot join chat - socket not connected');
+        connect(); // Спробуємо підключитися
         return false;
       }
     },
-    [connect, isConnected]
+    [connect]
   );
 
   // Відправка події
   const emit = useCallback(
     (event: string, data: any, callback?: (response: any) => void) => {
-      const currentSocket = socketInstanceRef.current;
-      if (currentSocket && isConnected) {
-        currentSocket.emit(event, data, callback);
+      const socket = socketRef.current;
+      if (socket && socket.connected) {
+        socket.emit(event, data, callback);
         return true;
       } else {
         console.warn(`Cannot emit ${event} - socket not connected`);
+        connect(); // Спробуємо підключитися
         return false;
       }
     },
-    [isConnected]
+    [connect]
   );
 
   // Підписка на події
-  const on = useCallback((event: string, listener: (...args: any[]) => void) => {
-    const currentSocket = socketInstanceRef.current;
-    if (currentSocket) {
-      currentSocket.on(event, listener);
-      return () => {
-        currentSocket.off(event, listener);
-      };
-    }
-    return () => {};
-  }, []);
+  const on = useCallback(
+    (event: string, listener: (...args: any[]) => void) => {
+      const socket = socketRef.current || connect();
+      if (socket) {
+        socket.on(event, listener);
+        return () => {
+          socket.off(event, listener);
+        };
+      }
+      return () => {};
+    },
+    [connect]
+  );
 
   // Відписка від подій
   const off = useCallback((event: string, listener?: (...args: any[]) => void) => {
-    const currentSocket = socketInstanceRef.current;
-    if (currentSocket) {
+    const socket = socketRef.current;
+    if (socket) {
       if (listener) {
-        currentSocket.off(event, listener);
+        socket.off(event, listener);
       } else {
-        currentSocket.off(event);
+        socket.off(event);
       }
     }
   }, []);
 
   return {
-    socket: socketInstanceRef.current,
+    socket: socketRef.current,
     isConnected,
     error,
     connect,

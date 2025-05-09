@@ -16,6 +16,7 @@ import {
 } from '@/shared/components/ui/dropdown-menu';
 import { useTheme } from 'next-themes';
 import { Spinner } from '@/shared/components/ui/spinner';
+import { ConnectionStatus } from '@/shared/components/ui/connection-status';
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -116,7 +117,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           <div className="p-4 border-b">
             <h1 className="text-2xl font-bold">Next.js DDD Chat</h1>
           </div>
-
+          <ConnectionStatus />
           <nav className="flex-1 p-4 space-y-1">
             <Button
               variant={isActive('/chat') ? 'default' : 'ghost'}

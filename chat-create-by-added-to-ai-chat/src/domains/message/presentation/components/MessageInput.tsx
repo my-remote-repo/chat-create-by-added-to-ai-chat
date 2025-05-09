@@ -26,12 +26,22 @@ export function MessageInput({
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { user, authenticatedFetch } = useAuth();
-  const { isConnected, emit } = useSocketIo();
+  const { isConnected, emit, connect } = useSocketIo();
   const { setTyping } = useTypingIndicator(chatId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingMessages = useRef<Map<string, any>>(new Map());
   const { queueMessage } = useOfflineMessageQueue();
+  const connectionAttempted = useRef(false);
+
+  // Спроба підключення при монтуванні, якщо не підключено
+  useEffect(() => {
+    if (!isConnected && !connectionAttempted.current) {
+      connectionAttempted.current = true;
+      connect();
+      console.log('Attempting to reconnect socket from MessageInput');
+    }
+  }, [isConnected, connect]);
 
   // Автоматичний ресайз текстової області
   useEffect(() => {
@@ -158,8 +168,51 @@ export function MessageInput({
         emit('message-updated', optimisticMessage);
       }
 
-      // Перевіряємо, чи є підключення
-      if (isConnected) {
+      // Відправляємо реальне повідомлення через REST API, якщо сокет не підключений
+      if (!isConnected) {
+        console.log('Socket not connected, sending message via REST API');
+
+        try {
+          const response = await authenticatedFetch(`/api/chat/${chatId}/messages`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              content: message.trim(),
+              replyToId: replyToMessage?.id,
+              files: uploadedFiles,
+            }),
+          });
+
+          if (response && response.ok) {
+            // Повідомлення надіслано успішно через REST API
+            emit('message-status-updated', {
+              messageId: tempId,
+              status: 'sent',
+            });
+          } else {
+            // Помилка відправки через REST API
+            throw new Error('Failed to send message via REST API');
+          }
+        } catch (apiError) {
+          console.error('Error sending message via REST API:', apiError);
+          // Додаємо повідомлення до черги для відправки після підключення
+          queueMessage({
+            id: tempId,
+            chatId,
+            content: message.trim(),
+            replyToId: replyToMessage?.id,
+            files: uploadedFiles || [],
+            createdAt: new Date(),
+          });
+
+          emit('message-status-updated', {
+            messageId: tempId,
+            status: 'offline',
+          });
+        }
+      } else {
         // Відправляємо реальне повідомлення через Socket.io
         emit('send-message', {
           tempId, // Включаємо тимчасовий ID для відстеження
@@ -168,24 +221,6 @@ export function MessageInput({
           replyToId: replyToMessage?.id,
           files: uploadedFiles || undefined,
         });
-      } else {
-        // Якщо немає підключення, додаємо повідомлення до черги
-        queueMessage({
-          id: tempId,
-          chatId,
-          content: message.trim(),
-          replyToId: replyToMessage?.id,
-          files: uploadedFiles || [],
-          createdAt: new Date(),
-        });
-
-        // Оновлюємо статус повідомлення на "offline"
-        setTimeout(() => {
-          emit('message-status-updated', {
-            messageId: tempId,
-            status: 'offline',
-          });
-        }, 1000);
       }
 
       // Очищаємо форму
@@ -213,6 +248,9 @@ export function MessageInput({
   const openFileSelector = () => {
     fileInputRef.current?.click();
   };
+
+  // ВАЖЛИВО: Змінюємо умову деактивації вводу - не залежить від isConnected
+  const isInputDisabled = uploading || sendingMessage;
 
   return (
     <div className="p-3 border-t bg-card">
@@ -286,7 +324,7 @@ export function MessageInput({
           variant="ghost"
           size="icon"
           onClick={openFileSelector}
-          disabled={uploading || sendingMessage}
+          disabled={isInputDisabled}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -319,16 +357,16 @@ export function MessageInput({
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              isConnected
-                ? 'Введіть повідомлення...'
-                : 'Офлайн режим - повідомлення будуть надіслані після підключення'
+              !isConnected
+                ? 'Офлайн режим - повідомлення будуть надіслані після підключення'
+                : 'Введіть повідомлення...'
             }
             className="w-full p-3 pr-10 resize-none min-h-[40px] max-h-[200px] rounded-md border border-input focus:outline-none focus:ring-2 focus:ring-ring"
             rows={1}
-            disabled={!isConnected || sendingMessage || uploading}
+            disabled={isInputDisabled}
           />
           {!isConnected && (
-            <div className="absolute right-2 top-2 text-destructive">
+            <div className="absolute right-2 top-2 text-amber-500">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
@@ -355,9 +393,7 @@ export function MessageInput({
         <Button
           type="button"
           onClick={handleSend}
-          disabled={
-            (!message.trim() && files.length === 0) || sendingMessage || uploading || !isConnected
-          }
+          disabled={(!message.trim() && files.length === 0) || isInputDisabled}
           size="icon"
         >
           {sendingMessage || uploading ? (
