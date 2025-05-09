@@ -11,7 +11,29 @@ interface UseSocketIoOptions {
 export function useSocketIo(options: UseSocketIoOptions = {}) {
   const socketContext = useSocket();
 
-  // Цей хук тепер просто передає методи з SocketProvider
+  // Додаткові методи для роботи з чатом можна додати тут
+
+  // Метод для надсилання повідомлення через сокет
+  const sendChatMessage = useCallback(
+    (data: {
+      chatId: string;
+      content: string;
+      replyToId?: string;
+      files?: Array<{
+        name: string;
+        url: string;
+        size: number;
+        type: string;
+      }>;
+      tempId?: string;
+    }) => {
+      console.log('Sending message via socket:', data);
+      return socketContext.emit('send-message', data);
+    },
+    [socketContext]
+  );
+
+  // Метод для приєднання до чату
   const joinChat = useCallback(
     (chatId: string) => {
       if (socketContext.isConnected) {
@@ -27,7 +49,7 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
     [socketContext]
   );
 
-  // Додайте функції для роботи з конкретними особливостями чату
+  // Метод для надсилання статусу набору
   const sendTypingStatus = useCallback(
     (chatId: string, isTyping: boolean) => {
       return socketContext.emit('typing', {
@@ -38,6 +60,7 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
     [socketContext]
   );
 
+  // Метод для зміни статусу користувача
   const changeUserStatus = useCallback(
     (status: string) => {
       return socketContext.emit('change-status', {
@@ -47,17 +70,35 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
     [socketContext]
   );
 
+  // Метод для позначення повідомлень як прочитаних
+  const markAsRead = useCallback(
+    (chatId: string, messageId?: string) => {
+      return socketContext.emit('read-message', {
+        chatId,
+        messageId,
+      });
+    },
+    [socketContext]
+  );
+
+  // Метод для перевірки з'єднання
+  const pingServer = useCallback(() => {
+    if (!socketContext.isConnected) {
+      console.warn('Cannot ping - socket not connected');
+      return false;
+    }
+
+    socketContext.emit('ping', { time: Date.now() });
+    return true;
+  }, [socketContext]);
+
   return {
-    socket: socketContext.socket,
-    isConnected: socketContext.isConnected,
-    error: socketContext.error,
-    connect: socketContext.connect,
-    disconnect: socketContext.disconnect,
-    emit: socketContext.emit,
-    on: socketContext.on,
-    off: socketContext.off,
+    ...socketContext,
     joinChat,
     sendTypingStatus,
+    sendChatMessage,
     changeUserStatus,
+    markAsRead,
+    pingServer,
   };
 }

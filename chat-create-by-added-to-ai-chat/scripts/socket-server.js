@@ -1,117 +1,52 @@
 // socket-server.js
 const { createServer } = require('http');
-const { Server } = require('socket.io');
+require('dotenv').config();
 
-// Створюємо HTTP сервер
-const httpServer = createServer();
+// Динамічний імпорт сконфігурованого сервера
+async function startServer() {
+  try {
+    // Створюємо HTTP сервер
+    const httpServer = createServer();
 
-// Створюємо Socket.IO сервер
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*', // В розробці дозволяємо всі джерела
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
-});
+    // Імпортуємо модуль, скомпільований з TypeScript
+    // Потрібно використовувати require.resolve для визначення шляху до скомпільованого файлу
+    const modulePath = './dist/lib/socket-service-server.js';
+    const { configureSocketServer } = require(modulePath);
 
-// Мінімальна перевірка токена (для розробки)
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  if (token) {
-    // Зберігаємо дані користувача в сокеті для зручності
-    socket.userId = socket.handshake.auth.userId;
-    socket.userName = socket.handshake.auth.userName;
-    next();
-  } else {
-    next(new Error('Authentication error: Token missing'));
-  }
-});
+    // Налаштовуємо Socket.IO сервер
+    const io = configureSocketServer(httpServer);
 
-// Обробка підключення клієнтів
-io.on('connection', socket => {
-  console.log(`User connected: ${socket.userId}`);
+    // Запускаємо сервер на порту 3001
+    const PORT = process.env.SOCKET_PORT || 3001;
+    httpServer.listen(PORT, () => {
+      console.log(`Socket.IO server running on port ${PORT}`);
+    });
 
-  // Сповістити всіх про підключення
-  socket.broadcast.emit('user-status-changed', {
-    userId: socket.userId,
-    status: 'online',
-    timestamp: new Date().toISOString(),
-  });
+    // Обробка помилок процесу
+    process.on('uncaughtException', error => {
+      console.error('Uncaught Exception:', error);
+    });
 
-  // Обробник приєднання до чату
-  socket.on('join-chat', chatId => {
-    socket.join(`chat:${chatId}`);
-    console.log(`User ${socket.userId} joined chat: ${chatId}`);
-  });
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection:', reason);
+    });
 
-  // Обробник відправки повідомлення
-  socket.on('send-message', data => {
-    console.log(`New message from ${socket.userId} in chat ${data.chatId}`);
-    // Формуємо об'єкт повідомлення
-    const message = {
-      id: data.id || `msg-${Date.now()}`,
-      content: data.content,
-      chatId: data.chatId,
-      userId: socket.userId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      readBy: [socket.userId],
-      files: data.files || [],
-      user: {
-        id: socket.userId,
-        name: socket.userName || 'Користувач',
-        image: socket.handshake.auth.userImage || null,
-      },
-      replyToId: data.replyToId,
-      tempId: data.tempId,
-    };
-
-    // Відправляємо всім учасникам чату
-    io.to(`chat:${data.chatId}`).emit('new-message', message);
-    // Повертаємо окремо відправнику підтвердження
-    if (data.tempId) {
-      socket.emit('message-status-updated', {
-        messageId: data.tempId,
-        status: 'sent',
-        actualId: message.id,
+    // Обробка зупинки процесу
+    process.on('SIGINT', () => {
+      console.log('Shutting down socket server...');
+      httpServer.close(() => {
+        console.log('Socket server shutdown complete');
+        process.exit(0);
       });
-    }
-  });
-
-  // Обробник набору тексту
-  socket.on('typing', data => {
-    socket.to(`chat:${data.chatId}`).emit('user-typing', {
-      userId: socket.userId,
-      userName: socket.userName || 'Користувач',
-      chatId: data.chatId,
-      isTyping: data.isTyping,
     });
-  });
+  } catch (error) {
+    console.error('Error starting socket server:', error);
+    process.exit(1);
+  }
+}
 
-  // Обробник прочитання повідомлень
-  socket.on('read-message', data => {
-    io.to(`chat:${data.chatId}`).emit('messages-read', {
-      userId: socket.userId,
-      chatId: data.chatId,
-      timestamp: new Date().toISOString(),
-    });
-  });
-
-  // Обробник відключення
-  socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.userId}`);
-    // Сповіщаємо всіх про відключення
-    socket.broadcast.emit('user-status-changed', {
-      userId: socket.userId,
-      status: 'offline',
-      timestamp: new Date().toISOString(),
-      lastSeen: new Date().toISOString(),
-    });
-  });
-});
-
-// Запускаємо сервер на порту 3001
-const PORT = 3001;
-httpServer.listen(PORT, () => {
-  console.log(`Socket.IO server running on port ${PORT}`);
+// Запуск сервера
+startServer().catch(err => {
+  console.error('Fatal error during startup:', err);
+  process.exit(1);
 });

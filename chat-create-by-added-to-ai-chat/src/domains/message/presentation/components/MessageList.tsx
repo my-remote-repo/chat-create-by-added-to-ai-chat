@@ -94,6 +94,63 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
     }
   }, [chatId, authenticatedFetch, onMarkAsRead]);
 
+  useEffect(() => {
+    // Налаштуйте слухача для нових повідомлень
+    const unsubscribe = on('new-message', newMessage => {
+      console.log('New message received:', newMessage);
+
+      // Перевіряємо, чи повідомлення для поточного чату
+      if (newMessage.chatId === chatId) {
+        // Додаємо повідомлення до списку
+        setMessages(prev => {
+          // Видаляємо оптимістичне повідомлення з тим же tempId, якщо є
+          const filtered = prev.filter(
+            m => m.id !== newMessage.tempId && !(m.isOptimistic && m.id === newMessage.id)
+          );
+
+          // Перевіряємо, чи повідомлення вже існує
+          if (filtered.some(m => m.id === newMessage.id)) {
+            return filtered;
+          }
+
+          // Додаємо нове повідомлення і сортуємо за датою
+          return [...filtered, newMessage].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        });
+
+        // Прокрутка вниз при отриманні нового повідомлення
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    });
+
+    // Слухач для оновлення статусу повідомлень
+    const statusUnsubscribe = on('message-status-updated', statusUpdate => {
+      console.log('Message status update:', statusUpdate);
+
+      // Оновлюємо статус оптимістичного повідомлення
+      setMessages(prev => {
+        return prev.map(m => {
+          if (m.id === statusUpdate.messageId) {
+            return {
+              ...m,
+              status: statusUpdate.status,
+              id: statusUpdate.actualId || m.id,
+            };
+          }
+          return m;
+        });
+      });
+    });
+
+    return () => {
+      unsubscribe();
+      statusUnsubscribe();
+    };
+  }, [chatId, on]);
+
   // Завантаження старіших повідомлень при прокрутці
   const loadMoreMessages = useCallback(async () => {
     if (!hasMore || loadingMore || !oldestMessageRef.current) return;

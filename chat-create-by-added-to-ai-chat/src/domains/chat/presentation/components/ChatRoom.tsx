@@ -10,6 +10,7 @@ import { UserAvatar } from '@/domains/user/presentation/components/Avatar';
 import { MessageList, MessageData } from '@/domains/message/presentation/components/MessageList';
 import { MessageInput } from '@/domains/message/presentation/components/MessageInput';
 import { useSocket } from '@/shared/providers/SocketProvider';
+import { useSocketIo } from '@/shared/hooks/useSocketIo';
 
 export function ChatRoom({ chatId }: { chatId: string }) {
   const [chat, setChat] = useState<any>(null);
@@ -20,6 +21,7 @@ export function ChatRoom({ chatId }: { chatId: string }) {
   const router = useRouter();
   const { isConnected, socket, emit } = useSocket();
   const fetchInProgress = useRef(false);
+  const { joinChat, markAsRead } = useSocketIo();
 
   // Використання socket для надсилання повідомлень
   const sendMessage = (content: string) => {
@@ -29,6 +31,25 @@ export function ChatRoom({ chatId }: { chatId: string }) {
       // інші дані повідомлення
     });
   };
+
+  useEffect(() => {
+    if (chatId) {
+      // Приєднуємось до кімнати чату
+      console.log(`Joining chat room: chat:${chatId}`);
+      joinChat(chatId);
+
+      // Позначаємо всі повідомлення як прочитані при вході
+      markAsRead(chatId);
+    }
+  }, [chatId, joinChat, markAsRead]);
+
+  useEffect(() => {
+    // Приєднуємось до кімнати чату при монтуванні компонента
+    if (isConnected && chatId) {
+      console.log(`Joining chat room: chat:${chatId}`);
+      emit('join-chat', chatId);
+    }
+  }, [chatId, isConnected, emit]);
 
   // Підписка на події - більш надійна версія
   useEffect(() => {

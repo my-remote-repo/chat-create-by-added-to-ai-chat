@@ -34,6 +34,13 @@ export function MessageInput({
   const { queueMessage } = useOfflineMessageQueue();
   const connectionAttempted = useRef(false);
 
+  interface UploadedFile {
+    name: string;
+    url: string;
+    size: number;
+    type: string;
+  }
+
   // Спроба підключення при монтуванні, якщо не підключено
   useEffect(() => {
     if (!isConnected && !connectionAttempted.current) {
@@ -127,8 +134,17 @@ export function MessageInput({
       // Генеруємо тимчасовий ID для оптимістичного UI
       const tempId = uuidv4();
 
-      // Створюємо оптимістичне повідомлення
-      const optimisticMessage: MessageData = {
+      // Додайте логування для відстеження процесу
+      console.log('Sending message:', {
+        tempId,
+        chatId,
+        content: message.trim(),
+        replyToId: replyToMessage?.id,
+        files: files.length > 0 ? 'Has files' : 'No files',
+      });
+
+      // Оптимістичне повідомлення для інтерфейсу
+      const optimisticMessage = {
         id: tempId,
         content: message.trim(),
         chatId,
@@ -143,96 +159,104 @@ export function MessageInput({
           name: user?.name || '',
           image: user?.image || null,
         },
-        replyTo: replyToMessage || undefined,
+        replyTo: replyToMessage,
         isOptimistic: true,
         status: 'sending',
       };
 
-      // Зберігаємо в кеші
-      pendingMessages.current.set(tempId, optimisticMessage);
-
-      // Емітуємо подію для нового повідомлення (для оптимістичного UI)
+      // Одразу відображаємо оптимістичне повідомлення для кращого UX
       emit('new-message', optimisticMessage);
 
       // Завантажуємо файли, якщо вони є
-      const uploadedFiles = files.length > 0 ? await uploadFiles() : [];
-
-      if (files.length > 0 && !uploadedFiles) {
-        throw new Error('Failed to upload files');
-      }
-
-      // Оновлюємо оптимістичне повідомлення з файлами
-      if (uploadedFiles && uploadedFiles.length > 0) {
-        optimisticMessage.files = uploadedFiles;
-        // Оновлюємо повідомлення в UI
-        emit('message-updated', optimisticMessage);
-      }
-
-      // Відправляємо реальне повідомлення через REST API, якщо сокет не підключений
-      if (!isConnected) {
-        console.log('Socket not connected, sending message via REST API');
-
+      let uploadedFiles: Array<{ name: string; url: string; size: number; type: string }> = [];
+      if (files.length > 0) {
         try {
-          const response = await authenticatedFetch(`/api/chat/${chatId}/messages`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              content: message.trim(),
-              replyToId: replyToMessage?.id,
-              files: uploadedFiles,
-            }),
-          });
-
-          if (response && response.ok) {
-            // Повідомлення надіслано успішно через REST API
-            emit('message-status-updated', {
-              messageId: tempId,
-              status: 'sent',
-            });
-          } else {
-            // Помилка відправки через REST API
-            throw new Error('Failed to send message via REST API');
+          const uploadResult = await uploadFiles();
+          if (!uploadResult) {
+            throw new Error('Failed to upload files');
           }
-        } catch (apiError) {
-          console.error('Error sending message via REST API:', apiError);
-          // Додаємо повідомлення до черги для відправки після підключення
-          queueMessage({
-            id: tempId,
-            chatId,
-            content: message.trim(),
-            replyToId: replyToMessage?.id,
-            files: uploadedFiles || [],
-            createdAt: new Date(),
-          });
-
-          emit('message-status-updated', {
-            messageId: tempId,
-            status: 'offline',
-          });
+          uploadedFiles = uploadResult as Array<{
+            name: string;
+            url: string;
+            size: number;
+            type: string;
+          }>;
+        } catch (uploadError) {
+          console.error('Error uploading files:', uploadError);
+          // Продовжуємо без файлів
         }
-      } else {
-        // Відправляємо реальне повідомлення через Socket.io
-        emit('send-message', {
-          tempId, // Включаємо тимчасовий ID для відстеження
+      }
+
+      // Перевіряємо підключення сокета перед відправкою
+      if (isConnected) {
+        // Використовуємо спеціальний метод для відправки повідомлень через сокет
+        const success = sendChatMessage({
+          tempId,
           chatId,
           content: message.trim(),
           replyToId: replyToMessage?.id,
-          files: uploadedFiles || undefined,
+          files: uploadedFiles,
         });
+
+        console.log('Socket message sent, success:', success);
+
+        if (!success) {
+          // Якщо відправка через сокет не вдалася - спробуємо через REST API
+          throw new Error('Socket send failed');
+        }
+      } else {
+        // Відправляємо через REST API, якщо сокет не підключений
+        console.log('Socket not connected, using REST API');
+        throw new Error('Socket not connected');
       }
 
       // Очищаємо форму
       setMessage('');
       setFiles([]);
       if (onCancelReply) onCancelReply();
-
-      // Скидаємо статус "друкує"
-      setTyping(false);
     } catch (err) {
       console.error('Error sending message:', err);
-      setError('Не вдалося відправити повідомлення');
+
+      // Спробуємо відправити через REST API як запасний варіант
+      try {
+        console.log('Trying REST API fallback');
+
+        // Завантажуємо файли, якщо ще не зробили це
+        let uploadedFiles = [];
+        if (files.length > 0) {
+          const uploadResult = await uploadFiles();
+          if (uploadResult) {
+            uploadedFiles = uploadResult;
+          }
+        }
+
+        const response = await authenticatedFetch(`/api/chat/${chatId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            content: message.trim(),
+            replyToId: replyToMessage?.id,
+            files: uploadedFiles,
+          }),
+        });
+
+        if (response && response.ok) {
+          // Успішно відправлено через REST API
+          console.log('Message sent via REST API');
+
+          // Очищаємо форму після успішного надсилання
+          setMessage('');
+          setFiles([]);
+          if (onCancelReply) onCancelReply();
+        } else {
+          setError('Не вдалося відправити повідомлення');
+        }
+      } catch (apiError) {
+        console.error('Error sending via REST API:', apiError);
+        setError('Не вдалося відправити повідомлення');
+      }
     } finally {
       setSendingMessage(false);
     }

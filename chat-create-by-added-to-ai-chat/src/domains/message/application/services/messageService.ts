@@ -76,6 +76,39 @@ export class MessageService {
   }
 
   /**
+   * Позначити повідомлення як прочитане
+   */
+  async markAsRead(messageId: string, userId: string): Promise<boolean> {
+    try {
+      // Отримуємо повідомлення
+      const message = await this.messageRepository.findById(messageId);
+
+      if (!message) {
+        return false;
+      }
+
+      // Перевірка, чи є користувач учасником чату
+      const isParticipant = await this.chatRepository.isParticipant(message.chatId, userId);
+      if (!isParticipant) {
+        return false;
+      }
+
+      // Перевірка, чи повідомлення вже прочитане
+      if (message.isReadBy(userId)) {
+        return true;
+      }
+
+      // Позначаємо повідомлення як прочитане
+      await this.messageRepository.markAsRead(messageId, userId);
+
+      return true;
+    } catch (error) {
+      console.error('Error marking message as read:', error);
+      return false;
+    }
+  }
+
+  /**
    * Отримати повідомлення в чаті
    */
   async getChatMessages(

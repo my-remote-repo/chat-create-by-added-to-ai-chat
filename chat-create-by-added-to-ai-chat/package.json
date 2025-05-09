@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "socket": "node scripts/socket-server.js",
+    "socket:dev": "tsc -p tsconfig.socket.json && node socket-server.js",
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
@@ -14,7 +16,6 @@
     "docker:down": "docker-compose down",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "test": "jest",
-    "socket": "node scripts/socket-server.js",
     "start1": "concurrently \"npm run dev\" \"npm run socket\""
   },
   "prisma": {
