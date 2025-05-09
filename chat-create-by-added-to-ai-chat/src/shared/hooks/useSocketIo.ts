@@ -50,8 +50,7 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
       console.log('Initializing Socket.io connection...');
 
       // Підключаємось до сокета
-      const socket = io({
-        path: '/api/socketio',
+      const socket = io('http://localhost:3001', {
         auth: {
           token: accessToken,
           userId: user.id,
@@ -61,7 +60,6 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
         reconnection: true,
         reconnectionAttempts,
         reconnectionDelay,
-        transports: ['websocket', 'polling'],
       });
 
       // Налаштовуємо обробники для стану з'єднання
@@ -98,6 +96,15 @@ export function useSocketIo(options: UseSocketIoOptions = {}) {
         console.error('Socket.io connection error:', err);
         setError(`Connection error: ${err.message}`);
         setIsConnected(false);
+
+        // Додайте ось цей код для більш інформативної діагностики
+        if (err.message.includes('timeout')) {
+          console.warn(
+            'Socket server might not be running. Please start the socket server using "npm run socket"'
+          );
+        } else if (err.message.includes('xhr poll error')) {
+          console.warn('Network issue or CORS problem. Check server CORS settings.');
+        }
 
         // Також спробуємо повторно підключитися при помилці з'єднання
         if (!manualDisconnect.current && reconnectCount.current < reconnectionAttempts) {

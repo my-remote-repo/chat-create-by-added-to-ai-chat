@@ -39,7 +39,7 @@ export function startSocketServer(): SocketIOServer | null {
     // Створюємо Socket.io сервер
     io = new SocketIOServer(httpServer, {
       cors: {
-        origin: process.env.NEXTAUTH_URL || 'http://localhost:3000',
+        origin: '*', // В розробці дозволяємо всі джерела
         methods: ['GET', 'POST'],
         credentials: true,
       },

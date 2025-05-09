@@ -13,7 +13,9 @@
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "test": "jest"
+    "test": "jest",
+    "socket": "node scripts/socket-server.js",
+    "start1": "concurrently \"npm run dev\" \"npm run socket\""
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -57,7 +59,6 @@
     "stream-browserify": "^3.0.0",
     "tailwind-merge": "^2.2.1",
     "tailwindcss-animate": "^1.0.7",
-    "ts-node": "^10.9.2",
     "uuid": "^11.1.0",
     "zod": "^3.22.4",
     "zustand": "^4.5.0"
@@ -87,6 +88,7 @@
     "prisma": "^5.10.0",
     "tailwindcss": "^3.4.1",
     "ts-jest": "^29.3.2",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
 }

@@ -9,7 +9,7 @@ import { Spinner } from '@/shared/components/ui/spinner';
 import { UserAvatar } from '@/domains/user/presentation/components/Avatar';
 import { MessageList, MessageData } from '@/domains/message/presentation/components/MessageList';
 import { MessageInput } from '@/domains/message/presentation/components/MessageInput';
-import { useSocketIo } from '@/shared/hooks/useSocketIo';
+import { useSocket } from '@/shared/providers/SocketProvider';
 
 export function ChatRoom({ chatId }: { chatId: string }) {
   const [chat, setChat] = useState<any>(null);
@@ -18,8 +18,47 @@ export function ChatRoom({ chatId }: { chatId: string }) {
   const [replyTo, setReplyTo] = useState<MessageData | null>(null);
   const { authenticatedFetch } = useAuth();
   const router = useRouter();
-  const { isConnected, emit } = useSocketIo();
+  const { isConnected, socket, emit } = useSocket();
   const fetchInProgress = useRef(false);
+
+  // Використання socket для надсилання повідомлень
+  const sendMessage = (content: string) => {
+    emit('send-message', {
+      chatId,
+      content,
+      // інші дані повідомлення
+    });
+  };
+
+  // Підписка на події - більш надійна версія
+  useEffect(() => {
+    if (!socket) return;
+
+    function handleNewMessage(message: any) {
+      // Обробка нових повідомлень
+    }
+
+    // Підписуємось на подію
+    socket.on('new-message', handleNewMessage);
+
+    // Відписуємось при розмонтуванні
+    return () => {
+      socket.off('new-message', handleNewMessage);
+    };
+  }, [socket]); // Залежність тільки від socket об'єкта
+
+  interface Chat {
+    id: string;
+    name: string;
+    isGroup: boolean;
+    otherUser?: {
+      id: string;
+      name: string;
+      image?: string;
+      status?: string;
+    };
+    // Інші властивості...
+  }
 
   // Функція для одноразового отримання даних чату
   const fetchChat = useCallback(async () => {
@@ -50,6 +89,37 @@ export function ChatRoom({ chatId }: { chatId: string }) {
       fetchInProgress.current = false;
     }
   }, [chatId, authenticatedFetch]);
+
+  useEffect(() => {
+    // Додайте цей код для оновлення статусу користувача кожні 10 секунд
+    const userStatusInterval = setInterval(async () => {
+      if (chat && chat.otherUser && chat.otherUser.id) {
+        try {
+          const response = await authenticatedFetch(`/api/users/status/${chat.otherUser.id}`);
+          if (response && response.ok) {
+            const statusData = await response.json();
+            // Оновлюємо статус локально
+            setChat((prev: Chat | null) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                otherUser: {
+                  ...prev.otherUser,
+                  status: statusData.status,
+                },
+              };
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching user status:', error);
+        }
+      }
+    }, 10000);
+
+    return () => {
+      clearInterval(userStatusInterval);
+    };
+  }, [chat, authenticatedFetch]);
 
   // Спрощений обробник прочитання повідомлень
   const handleMarkAsRead = useCallback(() => {
@@ -158,17 +228,21 @@ export function ChatRoom({ chatId }: { chatId: string }) {
         />
 
         <div className="ml-3 flex-1 overflow-hidden">
-          <h3 className="font-medium truncate">{chat.name}</h3>
-          {!isConnected && <p className="text-xs text-destructive">Офлайн-режим</p>}
-          {isConnected && (
-            <p className="text-xs text-muted-foreground">
-              {chat.isGroup
-                ? `${chat.participants.length} учасників`
-                : chat.otherUser?.status === 'online'
-                  ? 'В мережі'
-                  : 'Не в мережі'}
-            </p>
-          )}
+          <div className="flex items-center">
+            <h3 className="font-medium truncate">{chat.name}</h3>
+            {!isConnected && (
+              <span className="ml-2 px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-full">
+                Офлайн режим
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {chat.isGroup
+              ? `${chat.participants.length} учасників`
+              : chat.otherUser?.status === 'online'
+                ? 'В мережі'
+                : 'Не в мережі'}
+          </p>
         </div>
 
         <Button variant="ghost" size="icon">

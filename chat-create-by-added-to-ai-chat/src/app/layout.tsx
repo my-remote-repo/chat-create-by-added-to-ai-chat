@@ -3,6 +3,8 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/shared/providers/ThemeProvider';
 import { AuthProvider } from '@/domains/auth/presentation/providers/AuthProvider';
+import { SocketInitializer } from '@/shared/components/SocketInitializer';
+import { SocketProvider } from '@/shared/providers/SocketProvider';
 
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
@@ -25,7 +27,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <SocketProvider>{children}</SocketProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
