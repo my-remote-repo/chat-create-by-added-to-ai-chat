@@ -72,13 +72,25 @@ export function configureSocketServer(httpServer: HttpServer) {
 
     console.log(`User connected: ${userId}, Name: ${userName}`);
 
+    // Додайте логування для відстеження
+    console.log(`Setting user ${userId} status to online`);
+
     // Оновлюємо статус користувача на онлайн
     redisClient
       .setUserStatus(userId, 'online')
+      .then(() => console.log(`User ${userId} status updated to online`))
       .catch(err => console.error('Error setting user status:', err));
 
-    // Сповіщаємо інших про підключення
+    // Сповіщаємо інших про підключення - додайте логування
+    console.log(`Broadcasting status change for user ${userId}`);
     socket.broadcast.emit('user-status-changed', {
+      userId,
+      status: 'online',
+      timestamp: new Date().toISOString(),
+    });
+
+    // Додайте також локальне сповіщення, щоб відправник теж отримував оновлення
+    socket.emit('user-status-changed', {
       userId,
       status: 'online',
       timestamp: new Date().toISOString(),
@@ -103,6 +115,104 @@ export function configureSocketServer(httpServer: HttpServer) {
         return [];
       }
     };
+
+    socket.on('get-user-status', async (data: { userId: string }) => {
+      try {
+        if (!data || !data.userId) {
+          console.warn('get-user-status called without userId');
+          return;
+        }
+
+        console.log(`Status requested for user ${data.userId}`);
+
+        // Отримуємо статус користувача з Redis
+        const status = await redisClient.getUserStatus(data.userId);
+        console.log(`Status for user ${data.userId}: ${status}`);
+
+        // Надсилаємо статус назад клієнту
+        socket.emit('user-status-changed', {
+          userId: data.userId,
+          status: status || 'offline',
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error('Error getting user status:', error);
+      }
+    });
+
+    // Обробник запиту статусів кількох користувачів
+    socket.on('get-users-status', async (data: { userIds: string[] }) => {
+      try {
+        if (!data || !data.userIds || !Array.isArray(data.userIds)) {
+          console.warn('get-users-status called without userIds array');
+          return;
+        }
+
+        console.log(`Status requested for users: ${data.userIds.join(', ')}`);
+
+        // Отримуємо статуси всіх користувачів
+        for (const userId of data.userIds) {
+          const status = await redisClient.getUserStatus(userId);
+          console.log(`Status for user ${userId}: ${status}`);
+
+          // Надсилаємо статуси назад клієнту по одному
+          socket.emit('user-status-changed', {
+            userId,
+            status: status || 'offline',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        console.error('Error getting users status:', error);
+      }
+    });
+
+    // Обробник запиту усіх користувачів онлайн
+    socket.on('get-all-online-users', async (data: any) => {
+      // Додали параметр data для відповідності сигнатурі
+      try {
+        console.log('Requested all online users');
+
+        // Отримуємо всіх користувачів зі статусом "онлайн"
+        const onlineUsers = await redisClient.getUsersByStatus('online');
+        console.log(`Found ${onlineUsers.length} online users`);
+
+        // Надсилаємо статуси назад клієнту по одному
+        for (const userId of onlineUsers) {
+          socket.emit('user-status-changed', {
+            userId,
+            status: 'online',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        console.error('Error getting online users:', error);
+      }
+    });
+
+    // Покращений обробник пінгу для оновлення статусу
+    socket.on('ping', (data, callback) => {
+      console.log(`Ping from ${userId}:`, data);
+
+      // Оновлюємо статус користувача при піні
+      redisClient
+        .setUserStatus(userId, 'online')
+        .then(() => console.log(`User ${userId} status refreshed on ping`))
+        .catch(err => console.error('Error updating status on ping:', err));
+
+      if (typeof callback === 'function') {
+        callback({
+          pong: true,
+          time: Date.now(),
+          serverTime: new Date().toISOString(),
+        });
+      } else {
+        socket.emit('pong', {
+          time: Date.now(),
+          serverTime: new Date().toISOString(),
+        });
+      }
+    });
 
     // Автоматично приєднуємось до чатів користувача
     getChatIds().catch(err => console.error('Error auto-joining chats:', err));

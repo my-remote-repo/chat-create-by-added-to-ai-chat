@@ -105,9 +105,10 @@ export class RedisService implements IRedisService {
   }
 
   async getUserStatus(userId: string): Promise<string> {
-    await this.connect();
+    console.log(`[Redis] Getting status for user ${userId}`);
     const key = this.getKey(RedisKeyType.USER_STATUS, userId);
     const status = await this.client.get(key);
+    console.log(`[Redis] Status for user ${userId}: ${status || 'offline'}`);
     return status || 'offline';
   }
 
@@ -409,38 +410,22 @@ export class RedisService implements IRedisService {
     userId: string,
     status: 'online' | 'offline' | 'away' | 'busy'
   ): Promise<void> {
-    await this.connect();
-    const statusKey = `user:status:${userId}`;
-    const normalizedStatus = status.toLowerCase();
+    console.log(`[Redis] Setting user ${userId} status to ${status}`);
+    const key = this.getKey(RedisKeyType.USER_STATUS, userId);
+    await this.client.set(key, status);
 
-    // Отримуємо попередній статус
-    const previousStatus = await this.client.get(statusKey);
-
-    // Видаляємо користувача з старого списку статусів
-    if (previousStatus) {
-      await this.client.sRem(`user:status:list:${previousStatus}`, userId);
+    // Також оновлюємо список користувачів з конкретним статусом
+    // Видаляємо з усіх інших списків
+    const statuses = ['online', 'offline', 'away', 'busy'];
+    for (const s of statuses) {
+      if (s === status) {
+        await this.client.sAdd(`user:status:list:${s}`, userId);
+      } else {
+        await this.client.sRem(`user:status:list:${s}`, userId);
+      }
     }
 
-    // Встановлюємо новий статус
-    await this.client.set(statusKey, normalizedStatus);
-
-    // Додаємо користувача до нового списку статусів
-    await this.client.sAdd(`user:status:list:${normalizedStatus}`, userId);
-
-    // Якщо статус змінився на оффлайн, оновлюємо час останньої активності
-    if (normalizedStatus === 'offline') {
-      await this.client.set(`user:status:${userId}:lastSeen`, new Date().toISOString());
-    }
-
-    // Подія про зміну статусу для реального часу (для WebSockets)
-    await this.publish(
-      'user:status:changed',
-      JSON.stringify({
-        userId,
-        status: normalizedStatus,
-        timestamp: new Date().toISOString(),
-      })
-    );
+    console.log(`[Redis] User ${userId} status updated to ${status}`);
   }
 
   // Додаємо метод для дублювання клієнта (необхідно для Redis адаптера Socket.io)
