@@ -27,11 +27,27 @@ export class PrismaChatRepository implements ChatRepository {
       if (includeParticipants) {
         const participantsData = await prisma.chatParticipant.findMany({
           where: { chatId: id },
-          include: { user: true },
+          include: { user: true }, // Переконайтеся, що user включений
         });
+
+        console.log('Participants data from database:', participantsData);
 
         // Перетворення даних Prisma в доменну модель
         for (const partData of participantsData) {
+          // Переконайтеся, що дані користувача завантажені
+          if (!partData.user) {
+            console.warn(`User data missing for participant: ${partData.userId}`);
+            // Можливо, додатково завантажити користувача
+            const userData = await prisma.user.findUnique({
+              where: { id: partData.userId },
+            });
+            console.log('Loaded additional user data:', userData);
+
+            if (userData) {
+              partData.user = userData;
+            }
+          }
+
           participants.push(
             new Participant({
               id: partData.id,

@@ -1,7 +1,7 @@
 // src/domains/chat/presentation/components/ChatRoom.tsx
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/domains/auth/presentation/providers/AuthProvider';
 import { Button } from '@/shared/components/ui/button';
@@ -44,6 +44,7 @@ export function ChatRoom({ chatId }: { chatId: string }) {
   const router = useRouter();
   const { isConnected, socket, emit } = useSocket();
   const fetchInProgress = useRef(false);
+  const statusRequestedRef = useRef(false);
   const { joinChat, markAsRead, sendChatMessage } = useSocketIo();
   const { userStatuses, getUserStatus, requestUserStatus, requestUsersStatus } = useUserStatus();
 
@@ -63,19 +64,32 @@ export function ChatRoom({ chatId }: { chatId: string }) {
 
       if (response.ok) {
         const data = await response.json();
+        console.log('Chat data received:', data);
+
+        // Якщо потрібно, обробіть дані перед збереженням
+        if (
+          !data.isGroup &&
+          !data.otherUser &&
+          data.participants &&
+          data.participants.length === 2 &&
+          user
+        ) {
+          // Виправлена типізація параметра p
+          const otherParticipant = data.participants.find(
+            (p: ChatParticipant) => p.userId !== user.id
+          );
+          if (otherParticipant) {
+            console.log('Adding missing otherUser from participants');
+            data.otherUser = {
+              id: otherParticipant.userId,
+              name: otherParticipant.user?.name || 'Користувач',
+              image: otherParticipant.user?.image,
+            };
+          }
+        }
+
         setChat(data);
         setError(null);
-
-        // Запитуємо статуси відразу після отримання даних чату
-        if (!data.isGroup && data.otherUser && data.otherUser.id) {
-          console.log(`Requesting status for other user: ${data.otherUser.id}`);
-          requestUserStatus(data.otherUser.id);
-        } else if (data.isGroup && data.participants && data.participants.length > 0) {
-          const participantIds = data.participants
-            .filter((p: ChatParticipant) => p.userId !== user?.id) // Виключаємо поточного користувача
-            .map((p: ChatParticipant) => p.userId);
-          requestUsersStatus(participantIds);
-        }
       } else {
         throw new Error('Failed to fetch chat details');
       }
@@ -86,81 +100,102 @@ export function ChatRoom({ chatId }: { chatId: string }) {
       setLoading(false);
       fetchInProgress.current = false;
     }
-  }, [chatId, authenticatedFetch, requestUserStatus, requestUsersStatus, user]);
+  }, [chatId, authenticatedFetch, user]);
 
-  // Використання socket для надсилання повідомлень
-  const sendMessage = (content: string) => {
-    if (sendChatMessage) {
-      sendChatMessage({
-        chatId,
-        content,
-      });
-    } else {
-      emit('send-message', {
-        chatId,
-        content,
-      });
-    }
-  };
+  // Компонент монтується або змінюється chatId
+  useEffect(() => {
+    console.log(`[ChatRoom] Component mounted or chatId changed: ${chatId}`);
+    statusRequestedRef.current = false; // Скидаємо прапорець
+    fetchChat();
 
-  // Ефект для приєднання до кімнати чату
+    return () => {
+      fetchInProgress.current = false;
+      console.log(`[ChatRoom] Component unmounted or chatId changed from: ${chatId}`);
+    };
+  }, [chatId, fetchChat]);
+
+  // Приєднання до кімнати чату через socket.io
   useEffect(() => {
     if (chatId) {
-      console.log(`Joining chat room: chat:${chatId}`);
+      console.log(`[ChatRoom] Joining chat room: chat:${chatId}`);
       joinChat(chatId);
       markAsRead(chatId);
     }
 
     return () => {
-      console.log(`Leaving chat: ${chatId}`);
+      console.log(`[ChatRoom] Leaving chat: ${chatId}`);
     };
   }, [chatId, joinChat, markAsRead]);
 
-  // Ефект для приєднання через сокети при з'єднанні
+  // Надсилання join-chat події при з'єднанні
   useEffect(() => {
     if (isConnected && chatId) {
-      console.log(`Emission join-chat event for chat:${chatId}`);
+      console.log(`[ChatRoom] Sending join-chat event for chat:${chatId}`);
       emit('join-chat', chatId);
     }
   }, [chatId, isConnected, emit]);
 
-  // Ефект для запиту статусів користувачів кожні 30 секунд
+  // Єдиний ефект для запиту статусів після завантаження даних чату
   useEffect(() => {
-    if (!isConnected || !chat) return;
+    // Виконуємо тільки якщо чат завантажено і це не було зроблено раніше
+    if (chat && !statusRequestedRef.current) {
+      console.log('[ChatRoom] Chat data available, requesting statuses');
 
-    const requestStatus = () => {
       if (!chat.isGroup && chat.otherUser?.id) {
-        console.log(`Requesting status for other user: ${chat.otherUser.id}`);
+        console.log(`[ChatRoom] Requesting status for other user: ${chat.otherUser.id}`);
         requestUserStatus(chat.otherUser.id);
       } else if (chat.isGroup && chat.participants) {
         const participantIds = chat.participants
-          .filter((p: ChatParticipant) => p.userId !== user?.id)
-          .map((p: ChatParticipant) => p.userId);
+          .filter(p => p.userId !== user?.id)
+          .map(p => p.userId);
 
         if (participantIds.length > 0) {
-          console.log(`Requesting status for ${participantIds.length} participants`);
+          console.log(`[ChatRoom] Requesting status for ${participantIds.length} participants`);
+          requestUsersStatus(participantIds);
+        }
+      }
+
+      statusRequestedRef.current = true; // Позначаємо, що запит був зроблений
+    }
+  }, [chat, user, requestUserStatus, requestUsersStatus]);
+
+  // Періодичне оновлення статусів (лише якщо чат завантажено)
+  useEffect(() => {
+    if (!isConnected || !chat) return;
+
+    // Функція оновлення статусів
+    const updateStatuses = () => {
+      if (!chat.isGroup && chat.otherUser?.id) {
+        console.log(`[ChatRoom] Periodic status update for: ${chat.otherUser.id}`);
+        requestUserStatus(chat.otherUser.id);
+      } else if (chat.isGroup && chat.participants) {
+        const participantIds = chat.participants
+          .filter(p => p.userId !== user?.id)
+          .map(p => p.userId);
+
+        if (participantIds.length > 0) {
+          console.log(
+            `[ChatRoom] Periodic status update for ${participantIds.length} participants`
+          );
           requestUsersStatus(participantIds);
         }
       }
     };
 
-    // Початковий запит статусу
-    requestStatus();
-
-    // Налаштування інтервалу для періодичного оновлення статусів
-    const intervalId = setInterval(requestStatus, 30000);
+    // Запускаємо оновлення статусів кожні 30 секунд
+    const intervalId = setInterval(updateStatuses, 30000);
 
     return () => {
       clearInterval(intervalId);
     };
   }, [isConnected, chat, requestUserStatus, requestUsersStatus, user]);
 
-  // Підписка на події нових повідомлень
+  // Обробник нових повідомлень
   useEffect(() => {
     if (!socket) return;
 
     function handleNewMessage(message: any) {
-      console.log('New message received:', message);
+      console.log('[ChatRoom] New message received:', message);
       // Логіка обробки нових повідомлень (за потреби)
     }
 
@@ -171,23 +206,12 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     };
   }, [socket]);
 
-  // Спрощений обробник прочитання повідомлень
+  // Обробник прочитання повідомлень
   const handleMarkAsRead = useCallback(() => {
     if (isConnected && chatId) {
       emit('read-message', { chatId });
     }
   }, [chatId, emit, isConnected]);
-
-  // Підключення до чату при монтуванні компонента
-  useEffect(() => {
-    if (chatId) {
-      fetchChat();
-    }
-
-    return () => {
-      fetchInProgress.current = false;
-    };
-  }, [chatId, fetchChat]);
 
   const handleGoBack = () => {
     router.push('/chat');
@@ -201,26 +225,33 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     setReplyTo(null);
   };
 
-  // Отримання статусу для іншого користувача
-  const getOtherUserStatus = useCallback(() => {
-    if (!chat || chat.isGroup) return undefined;
+  // Обчислюємо статус іншого користувача один раз при кожному оновленні залежностей
+  const otherUserStatus = useMemo(() => {
+    if (!chat || chat.isGroup) {
+      return undefined;
+    }
+
+    // Визначаємо ID іншого користувача
+    let otherUserId: string | undefined;
 
     if (chat.otherUser?.id) {
-      // Спочатку перевіряємо статус зі стану userStatuses
-      const statusInfo = getUserStatus(chat.otherUser.id);
-      console.log(
-        `Status for ${chat.otherUser.id}:`,
-        statusInfo ? statusInfo.status : 'from chat:',
-        chat.otherUser.status
-      );
+      otherUserId = chat.otherUser.id;
+    } else if (user && chat.participants) {
+      // Виправлена типізація
+      const otherParticipant = chat.participants.find((p: ChatParticipant) => p.userId !== user.id);
+      otherUserId = otherParticipant?.userId;
+    }
 
-      // Повертаємо статус з хуку, якщо він доступний, в іншому випадку - зі стану чату
-      return statusInfo?.status || chat.otherUser.status || 'offline';
+    // Отримуємо статус за ID
+    if (otherUserId) {
+      const status = getUserStatus(otherUserId);
+      return status?.status || 'offline';
     }
 
     return 'offline';
-  }, [chat, getUserStatus]);
+  }, [chat, user, getUserStatus]);
 
+  // Рендеринг при завантаженні
   if (loading && !chat) {
     return (
       <div className="flex items-center justify-center h-full p-4">
@@ -229,6 +260,7 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     );
   }
 
+  // Рендеринг при помилці
   if (error && !chat) {
     return (
       <div className="p-4 text-destructive">
@@ -240,6 +272,7 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     );
   }
 
+  // Рендеринг під час завантаження даних
   if (!chat) {
     return (
       <div className="flex flex-col h-full">
@@ -271,9 +304,7 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     );
   }
 
-  // Отримуємо поточний статус іншого користувача
-  const otherUserStatus = getOtherUserStatus();
-
+  // Основний рендеринг компонента
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b flex items-center">

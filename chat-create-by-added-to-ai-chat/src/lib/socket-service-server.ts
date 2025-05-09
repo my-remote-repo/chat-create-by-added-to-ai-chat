@@ -70,24 +70,28 @@ export function configureSocketServer(httpServer: HttpServer) {
     const userId = authSocket.data.userId;
     const userName = authSocket.data.userName || 'Користувач';
 
-    console.log(`User connected: ${userId}, Name: ${userName}`);
+    console.log(`[Server] User connected: ${userId}, Name: ${userName}`);
 
     // Додайте логування для відстеження
-    console.log(`Setting user ${userId} status to online`);
+    console.log(`[Server] Setting user ${userId} status to online`);
 
     // Оновлюємо статус користувача на онлайн
     redisClient
       .setUserStatus(userId, 'online')
-      .then(() => console.log(`User ${userId} status updated to online`))
-      .catch(err => console.error('Error setting user status:', err));
+      .then(() => console.log(`[Server] User ${userId} status updated to online`))
+      .catch(err => console.error('[Server] Error setting user status:', err));
 
     // Сповіщаємо інших про підключення - додайте логування
-    console.log(`Broadcasting status change for user ${userId}`);
-    socket.broadcast.emit('user-status-changed', {
+    console.log(`[Server] Broadcasting status change for user ${userId}`);
+
+    // ВАЖЛИВО: використовуйте io.emit, а не socket.broadcast.emit
+    io.emit('user-status-changed', {
       userId,
       status: 'online',
       timestamp: new Date().toISOString(),
     });
+
+    console.log(`[Server] Status change emitted to all clients`);
 
     // Додайте також локальне сповіщення, щоб відправник теж отримував оновлення
     socket.emit('user-status-changed', {
@@ -169,16 +173,16 @@ export function configureSocketServer(httpServer: HttpServer) {
 
     // Обробник запиту усіх користувачів онлайн
     socket.on('get-all-online-users', async (data: any) => {
-      // Додали параметр data для відповідності сигнатурі
       try {
-        console.log('Requested all online users');
+        console.log('[Server] Requested all online users');
 
         // Отримуємо всіх користувачів зі статусом "онлайн"
         const onlineUsers = await redisClient.getUsersByStatus('online');
-        console.log(`Found ${onlineUsers.length} online users`);
+        console.log(`[Server] Found ${onlineUsers.length} online users:`, onlineUsers);
 
         // Надсилаємо статуси назад клієнту по одному
         for (const userId of onlineUsers) {
+          console.log(`[Server] Sending online status for user ${userId}`);
           socket.emit('user-status-changed', {
             userId,
             status: 'online',
@@ -186,7 +190,7 @@ export function configureSocketServer(httpServer: HttpServer) {
           });
         }
       } catch (error) {
-        console.error('Error getting online users:', error);
+        console.error('[Server] Error getting online users:', error);
       }
     });
 
@@ -449,7 +453,7 @@ export function configureSocketServer(httpServer: HttpServer) {
         }
 
         // Сповіщаємо про відключення
-        socket.broadcast.emit('user-status-changed', {
+        io.emit('user-status-changed', {
           userId,
           status: 'offline',
           timestamp: new Date().toISOString(),

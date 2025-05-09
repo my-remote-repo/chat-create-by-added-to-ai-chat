@@ -1,5 +1,5 @@
-import { UserDTO } from "@/domains/user/domain/entities/user";
-import { Participant } from "./participant";
+import { UserDTO } from '@/domains/user/domain/entities/user';
+import { Participant } from './participant';
 
 /**
  * Властивості чату
@@ -67,12 +67,15 @@ export class Chat {
     return this.props.participants || [];
   }
 
-  get lastMessage(): {
-    id: string;
-    content: string;
-    createdAt: Date;
-    senderId: string;
-  } | null | undefined {
+  get lastMessage():
+    | {
+        id: string;
+        content: string;
+        createdAt: Date;
+        senderId: string;
+      }
+    | null
+    | undefined {
     return this.props.lastMessage;
   }
 
@@ -89,11 +92,11 @@ export class Chat {
   public addParticipant(participant: Participant): Chat {
     // Перевірка, чи учасник вже є в чаті
     const exists = this.participants.some(p => p.userId === participant.userId);
-    
+
     if (exists) {
       return this;
     }
-    
+
     return new Chat({
       ...this.props,
       participants: [...this.participants, participant],
@@ -116,7 +119,7 @@ export class Chat {
       }
       return participant;
     });
-    
+
     return new Chat({
       ...this.props,
       participants: updatedParticipants,
@@ -142,15 +145,26 @@ export class Chat {
     // Для особистого чату знаходимо іншого учасника для відображення імені
     let displayName = this.name;
     let otherParticipant: Participant | undefined;
-    
+    let otherUser = undefined;
+
+    console.log('toDTO called with currentUserId:', currentUserId);
+    console.log('Participants:', this.participants);
+
     if (!this.isGroup && currentUserId && this.participants.length === 2) {
       otherParticipant = this.participants.find(p => p.userId !== currentUserId);
-      if (otherParticipant && otherParticipant.user) {
-        displayName = otherParticipant.user.name;
+      console.log('Found otherParticipant:', otherParticipant);
+
+      if (otherParticipant) {
+        if (otherParticipant.user) {
+          displayName = otherParticipant.user.name;
+          otherUser = otherParticipant.user.toDTO(); // ДОДАЄМО це
+        } else {
+          console.log('otherParticipant.user is missing!');
+        }
       }
     }
-    
-    return {
+
+    const result = {
       id: this.id,
       name: displayName || null,
       description: this.description,
@@ -160,8 +174,11 @@ export class Chat {
       updatedAt: this.updatedAt,
       participants: this.participants.map(p => p.toDTO()),
       lastMessage: this.lastMessage,
-      otherUser: otherParticipant?.user,
+      otherUser: otherUser, // Забезпечуємо наявність цього поля
     };
+
+    console.log('Chat DTO result:', result);
+    return result;
   }
 }
 

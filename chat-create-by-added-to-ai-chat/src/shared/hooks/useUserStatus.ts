@@ -16,18 +16,52 @@ export function useUserStatus() {
   const { on, off, changeUserStatus, emit, isConnected } = useSocketIo();
   const [userStatuses, setUserStatuses] = useState<Record<string, UserStatusInfo>>({});
 
-  // Функція для оновлення статусу користувача
+  // Додайте консоль лог щоб побачити стан userStatuses при кожному рендері
+  console.log('[useUserStatus] Current statuses:', userStatuses);
+
   const updateUserStatus = useCallback((userId: string, status: UserStatus, lastSeen?: string) => {
-    console.log(`Updating status for user ${userId} to ${status}`);
-    setUserStatuses(prev => ({
-      ...prev,
-      [userId]: {
-        userId,
-        status,
-        lastSeen,
-      },
-    }));
+    console.log(`[useUserStatus] Updating status for user ${userId} to ${status}`);
+    setUserStatuses(prev => {
+      const newState = {
+        ...prev,
+        [userId]: {
+          userId,
+          status,
+          lastSeen,
+        },
+      };
+      console.log('[useUserStatus] New state:', newState);
+      return newState;
+    });
   }, []);
+
+  // В обробнику подій
+  useEffect(() => {
+    console.log('[useUserStatus] Setting up user status listeners');
+
+    const handleStatusChange = (data: any) => {
+      console.log('[useUserStatus] Status change event received:', data);
+      if (data && data.userId && data.status) {
+        updateUserStatus(data.userId, data.status, data.lastSeen);
+      }
+    };
+
+    const unsubscribe = on('user-status-changed', handleStatusChange);
+
+    // Додайте периодичний запит статусів для діагностики
+    const intervalId = setInterval(() => {
+      if (isConnected) {
+        console.log('[useUserStatus] Periodic status request');
+        emit('get-all-online-users', {});
+      }
+    }, 15000); // кожні 15 секунд
+
+    return () => {
+      console.log('[useUserStatus] Cleaning up user status listeners');
+      unsubscribe();
+      clearInterval(intervalId);
+    };
+  }, [on, updateUserStatus, emit, isConnected]);
 
   // Запит статусу користувача
   const requestUserStatus = useCallback(
@@ -95,7 +129,9 @@ export function useUserStatus() {
   // Функція для отримання статусу конкретного користувача
   const getUserStatus = useCallback(
     (userId: string): UserStatusInfo | null => {
-      return userStatuses[userId] || null;
+      const status = userStatuses[userId];
+      console.log(`[useUserStatus] Getting status for ${userId}:`, status || 'not found');
+      return status || null;
     },
     [userStatuses]
   );

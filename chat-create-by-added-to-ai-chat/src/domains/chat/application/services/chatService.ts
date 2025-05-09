@@ -33,8 +33,11 @@ export class ChatService {
       return null; // Користувач не має доступу до чату
     }
 
-    // Повертаємо DTO з інформацією для поточного користувача
-    return chat.toDTO(userId);
+    // ДОДАЙТЕ ЦЕЙ КОНСОЛЬ ЛОГ щоб побачити що повертає метод toDTO
+    const chatDto = chat.toDTO(userId);
+    console.log('Chat DTO for frontend:', chatDto);
+
+    return chatDto;
   }
 
   /**
