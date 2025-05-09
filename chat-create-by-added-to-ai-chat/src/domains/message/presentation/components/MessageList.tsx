@@ -1,7 +1,7 @@
 // src/domains/message/presentation/components/MessageList.tsx
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '@/domains/auth/presentation/providers/AuthProvider';
 import { Spinner } from '@/shared/components/ui/spinner';
 import { Button } from '@/shared/components/ui/button';
@@ -10,7 +10,7 @@ import { MessageItem } from './MessageItem';
 import { useSocketIo } from '@/shared/hooks/useSocketIo';
 import { useTypingIndicator } from '@/shared/hooks/useTypingIndicator';
 
-// Розширений інтерфейс MessageData з усіма необхідними властивостями
+// Оригінальний інтерфейс MessageData
 export interface MessageData {
   id: string;
   content: string;
@@ -32,11 +32,10 @@ export interface MessageData {
   status?: 'sending' | 'sent' | 'error' | 'offline';
 }
 
-// Явно визначаємо інтерфейс пропсів
 interface MessageListProps {
   chatId: string;
   onReplyToMessage?: (message: MessageData) => void;
-  onMarkAsRead?: () => void; // Функція для позначення повідомлень як прочитаних
+  onMarkAsRead?: () => void;
 }
 
 export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageListProps) {
@@ -47,100 +46,57 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
   const [loadingMore, setLoadingMore] = useState(false);
   const { user, authenticatedFetch } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { on, joinChat, markMessagesAsRead, off } = useSocketIo();
+  const { on, off, emit } = useSocketIo();
   const { typingMessage } = useTypingIndicator(chatId);
   const oldestMessageRef = useRef<string | null>(null);
-  const newestMessageIdRef = useRef<string | null>(null);
   const userScrolledUpRef = useRef(false);
-  const shouldScrollToBottomRef = useRef(true);
-  const lastReadTimeRef = useRef<number>(Date.now());
+  const fetchingMessagesRef = useRef(false);
 
-  const fetchInProgressRef = useRef(false);
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const retryCountRef = useRef(0);
+  // Однократне завантаження повідомлень
+  const fetchMessages = useCallback(async () => {
+    if (fetchingMessagesRef.current) return;
+    fetchingMessagesRef.current = true;
 
-  // Функція для позначення повідомлень як прочитаних з дебаунсом
-  const markAsRead = useCallback(() => {
-    const now = Date.now();
-    // Не виконуємо частіше ніж раз на 2 секунди
-    if (now - lastReadTimeRef.current > 2000) {
-      lastReadTimeRef.current = now;
+    try {
+      setLoading(true);
+      const response = await authenticatedFetch(`/api/chat/${chatId}/messages`);
 
-      // Використовуємо або функцію з пропсів, або стандартну з хука
-      if (onMarkAsRead) {
-        onMarkAsRead();
-      } else {
-        markMessagesAsRead(chatId);
-      }
-    }
-  }, [chatId, onMarkAsRead, markMessagesAsRead]);
-
-  // Стабілізуємо функцію addNewMessage з useCallback
-  const addNewMessage = useCallback((newMessage: MessageData, isOptimistic = false) => {
-    setMessages(prevMessages => {
-      // Якщо це оптимістичне повідомлення, просто додаємо його
-      if (isOptimistic) {
-        newMessage.isOptimistic = true;
-        newMessage.status = 'sending';
-        newestMessageIdRef.current = newMessage.id;
-        return [...prevMessages, newMessage];
+      if (!response || !response.ok) {
+        throw new Error('Failed to fetch messages');
       }
 
-      // Якщо це підтверджене повідомлення з сервера
-      const optimisticIndex = prevMessages.findIndex(
-        msg => msg.isOptimistic && msg.id === newMessage.id
+      const data = await response.json();
+      const sortedMessages = [...data].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       );
 
-      if (optimisticIndex !== -1) {
-        // Замінюємо оптимістичну версію підтвердженою
-        const updatedMessages = [...prevMessages];
-        updatedMessages[optimisticIndex] = {
-          ...newMessage,
-          isOptimistic: false,
-          status: 'sent',
-        };
-        return updatedMessages;
-      } else {
-        // Перевіряємо на дублікати за реальним ID
-        const existingIndex = prevMessages.findIndex(msg => msg.id === newMessage.id);
-        if (existingIndex !== -1) {
-          return prevMessages;
-        }
+      setMessages(sortedMessages);
+      setHasMore(data.length >= 30); // Припускаємо, що ліміт 30
 
-        // Це нове повідомлення з сервера
-        newestMessageIdRef.current = newMessage.id;
-        const updatedMessages = [...prevMessages, newMessage];
-        return updatedMessages.sort(
-          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-        );
+      if (data.length > 0) {
+        oldestMessageRef.current = data[0].id;
       }
-    });
 
-    // Прокрутка вниз при отриманні нового повідомлення, якщо користувач не прокрутив вгору
-    if (!userScrolledUpRef.current) {
+      if (onMarkAsRead) {
+        onMarkAsRead();
+      }
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+      setError('Не вдалося завантажити повідомлення');
+    } finally {
+      setLoading(false);
+      fetchingMessagesRef.current = false;
+
+      // Прокрутка до останнього повідомлення
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     }
-  }, []); // Не додаємо залежності, щоб уникнути перестворення функції
+  }, [chatId, authenticatedFetch, onMarkAsRead]);
 
-  // Обробник прокрутки для визначення напрямку
-  const handleScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      userScrolledUpRef.current = scrollTop < scrollHeight - clientHeight - 100;
-
-      // Якщо користувач дійшов до верху, завантажуємо більше повідомлень
-      if (scrollTop === 0 && hasMore && !loadingMore) {
-        loadMoreMessages();
-      }
-    },
-    [hasMore, loadingMore]
-  );
-
-  // Завантаження старіших повідомлень - стабілізуємо з useCallback
+  // Завантаження старіших повідомлень при прокрутці
   const loadMoreMessages = useCallback(async () => {
-    if (!hasMore || loadingMore || !oldestMessageRef.current || !authenticatedFetch) return;
+    if (!hasMore || loadingMore || !oldestMessageRef.current) return;
 
     try {
       setLoadingMore(true);
@@ -148,295 +104,114 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
         `/api/chat/${chatId}/messages?cursor=${oldestMessageRef.current}`
       );
 
-      if (!response) throw new Error('Failed to load more messages');
-
-      if (response.ok) {
-        const data = await response.json();
-
-        if (data.length > 0) {
-          setMessages(prevMessages => {
-            // Фільтруємо, щоб уникнути дублікатів
-            const newMessages = data.filter(
-              (newMsg: MessageData) => !prevMessages.some(msg => msg.id === newMsg.id)
-            );
-
-            if (newMessages.length > 0) {
-              oldestMessageRef.current = newMessages[newMessages.length - 1].id;
-            }
-
-            const updatedMessages = [...prevMessages, ...newMessages];
-            return updatedMessages.sort(
-              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-            );
-          });
-
-          setHasMore(data.length === 30);
-        } else {
-          setHasMore(false);
-        }
-      } else {
+      if (!response || !response.ok) {
         throw new Error('Failed to load more messages');
+      }
+
+      const data = await response.json();
+
+      if (data.length > 0) {
+        // Додаємо тільки унікальні повідомлення
+        setMessages(prevMessages => {
+          const newMessages = data.filter(
+            (newMsg: MessageData) => !prevMessages.some(msg => msg.id === newMsg.id)
+          );
+
+          if (newMessages.length > 0) {
+            oldestMessageRef.current = newMessages[0].id;
+          }
+
+          return [...newMessages, ...prevMessages].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        });
+
+        setHasMore(data.length >= 30);
+      } else {
+        setHasMore(false);
       }
     } catch (err) {
       console.error('Error loading more messages:', err);
-      setError('Не вдалося завантажити більше повідомлень');
+      setError('Не вдалося завантажити старіші повідомлення');
     } finally {
       setLoadingMore(false);
     }
   }, [chatId, authenticatedFetch, hasMore, loadingMore]);
 
-  // Мемоізуємо функцію handleReply, щоб уникнути перестворення при кожному рендері
-  const handleReply = useCallback(
-    (message: MessageData) => {
-      if (onReplyToMessage) {
-        onReplyToMessage(message);
+  // Обробник прокрутки
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+      userScrolledUpRef.current = scrollTop < scrollHeight - clientHeight - 100;
+
+      // Завантаження старіших повідомлень при досягненні верху
+      if (scrollTop === 0 && hasMore && !loadingMore) {
+        loadMoreMessages();
       }
     },
-    [onReplyToMessage]
+    [hasMore, loadingMore, loadMoreMessages]
   );
 
-  // Завантаження початкових повідомлень
+  // Лише один useEffect для налаштування слухачів подій
   useEffect(() => {
-    let isMounted = true; // Флаг для запобігання оновлення стану після розмонтовування
-
-    const fetchMessages = async () => {
-      if (!authenticatedFetch) return;
-
-      try {
-        setLoading(true);
-        const response = await authenticatedFetch(`/api/chat/${chatId}/messages`);
-
-        if (!response) throw new Error('Failed to fetch messages');
-
-        if (response.ok) {
-          const data = await response.json();
-
-          // Сортуємо за часом створення
-          const sortedData = [...data].sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
-
-          if (isMounted) {
-            setMessages(sortedData);
-
-            // Зберігаємо ID першого та останнього повідомлення для пагінації
-            if (data.length > 0) {
-              oldestMessageRef.current = data[data.length - 1].id;
-              newestMessageIdRef.current = data[0].id;
-            }
-
-            setHasMore(data.length === 30); // Припускаємо, що ліміт за замовчуванням 30
-
-            // Позначаємо повідомлення як прочитані після завантаження
-            markAsRead();
-          }
-        } else {
-          throw new Error('Failed to fetch messages');
-        }
-      } catch (err) {
-        console.error('Error fetching messages:', err);
-        if (isMounted) {
-          setError('Не вдалося завантажити повідомлення');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-
-          // Прокрутка вниз після завантаження
-          setTimeout(() => {
-            if (shouldScrollToBottomRef.current && messagesEndRef.current) {
-              messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-            }
-          }, 100);
-        }
-      }
-    };
-
+    // Завантажуємо початкові повідомлення тільки один раз
     if (chatId) {
       fetchMessages();
-      joinChat(chatId);
     }
 
-    return () => {
-      isMounted = false; // Встановлюємо флаг при розмонтуванні
-      // Відписуємось від подій при розмонтуванні
-      off('new-message');
-      off('message-status-updated');
-    };
-  }, [chatId, authenticatedFetch, joinChat, markAsRead, off]);
-
-  // Прослуховування нових повідомлень - виділено в окремий useEffect
-  useEffect(() => {
-    if (!user) return;
-
+    // Обробник для нових повідомлень
     const handleNewMessage = (message: MessageData) => {
       if (message.chatId === chatId) {
-        // Додаємо нове повідомлення
-        addNewMessage(message);
-
-        // Якщо повідомлення від інших користувачів, позначаємо його як прочитане
-        if (message.userId !== user.id) {
-          markAsRead();
-        }
-      }
-    };
-
-    // Підписка на події нових повідомлень
-    const unsubscribe = on('new-message', handleNewMessage);
-
-    // Підписка на оновлення статусу повідомлень - виділено в окремий обробник
-    const statusUnsubscribe = on(
-      'message-status-updated',
-      (data: { messageId: string; status: string }) => {
-        setMessages(prevMessages => {
-          const updatedMessages = [...prevMessages];
-          const messageIndex = updatedMessages.findIndex(msg => msg.id === data.messageId);
-
-          if (messageIndex !== -1) {
-            updatedMessages[messageIndex] = {
-              ...updatedMessages[messageIndex],
-              status: data.status as 'sending' | 'sent' | 'error' | 'offline',
-              isOptimistic: data.status === 'sending',
-            };
+        setMessages(prev => {
+          // Перевіряємо, чи повідомлення вже є в списку
+          if (prev.some(m => m.id === message.id)) {
+            return prev;
           }
 
-          return updatedMessages;
-        });
-      }
-    );
-
-    return () => {
-      unsubscribe();
-      statusUnsubscribe();
-    };
-  }, [chatId, user, addNewMessage, on, markAsRead]);
-
-  useEffect(() => {
-    let isMounted = true; // Флаг для запобігання оновлення стану після розмонтовування
-
-    const fetchMessages = async () => {
-      // Запобігаємо паралельним запитам
-      if (fetchInProgressRef.current) return;
-
-      fetchInProgressRef.current = true;
-
-      try {
-        setLoading(true);
-        const response = await authenticatedFetch(`/api/chat/${chatId}/messages`);
-
-        if (!response) throw new Error('Failed to fetch messages');
-
-        if (response.ok) {
-          const data = await response.json();
-
-          // Сортуємо за часом створення
-          const sortedData = [...data].sort(
+          const newMessages = [...prev, message].sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
 
-          if (isMounted) {
-            setMessages(sortedData);
+          return newMessages;
+        });
 
-            // Зберігаємо ID першого та останнього повідомлення для пагінації
-            if (data.length > 0) {
-              oldestMessageRef.current = data[data.length - 1].id;
-              newestMessageIdRef.current = data[0].id;
-            }
-
-            setHasMore(data.length === 30); // Припускаємо, що ліміт за замовчуванням 30
-
-            // Скидаємо лічильник спроб після успіху
-            retryCountRef.current = 0;
-
-            // Позначаємо повідомлення як прочитані після завантаження
-            // Використовуємо setTimeout, щоб дати можливість браузеру "відпочити"
-            setTimeout(() => {
-              if (isMounted) {
-                markAsRead();
-              }
-            }, 1000);
-          }
-        } else {
-          throw new Error('Failed to fetch messages');
-        }
-      } catch (err) {
-        console.error('Error fetching messages:', err);
-        if (isMounted) {
-          setError('Не вдалося завантажити повідомлення');
-
-          // Збільшуємо час очікування з кожною невдалою спробою (експоненційна затримка)
-          retryCountRef.current += 1;
-
-          // Плануємо наступну спробу з експоненційною затримкою, але не більше 1 хвилини
-          const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 60000);
-
-          if (retryCountRef.current < 5) {
-            // Максимум 5 спроб
-            if (retryTimeoutRef.current) {
-              clearTimeout(retryTimeoutRef.current);
-            }
-
-            retryTimeoutRef.current = setTimeout(() => {
-              if (isMounted) {
-                fetchInProgressRef.current = false;
-                fetchMessages();
-              }
-            }, delay);
-          }
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-
-        fetchInProgressRef.current = false;
-
-        // Прокрутка вниз після завантаження
-        if (isMounted) {
+        // Прокрутка вниз при новому повідомленні, якщо користувач не прокрутив вгору
+        if (!userScrolledUpRef.current) {
           setTimeout(() => {
-            if (shouldScrollToBottomRef.current && messagesEndRef.current) {
-              messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-            }
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
           }, 100);
         }
-      }
-    };
 
-    if (chatId) {
-      fetchMessages();
-      joinChat(chatId);
-    }
-
-    return () => {
-      isMounted = false; // Встановлюємо флаг при розмонтуванні
-
-      // Очищуємо таймери
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-      }
-
-      // Відписуємось від подій при розмонтуванні
-      off('new-message');
-      off('message-status-updated');
-    };
-  }, [chatId, authenticatedFetch, joinChat, markAsRead, off]);
-
-  // Групування повідомлень за датою - мемоізуємо для оптимізації
-  const groupedMessages = useMemo(() => {
-    return messages.reduce(
-      (groups, message) => {
-        const date = new Date(message.createdAt).toLocaleDateString();
-        if (!groups[date]) {
-          groups[date] = [];
+        // Повідомлення не від поточного користувача
+        if (user && message.userId !== user.id && onMarkAsRead) {
+          onMarkAsRead();
         }
-        groups[date].push(message);
-        return groups;
-      },
-      {} as Record<string, MessageData[]>
-    );
+      }
+    };
+
+    // Підписка на події
+    const newMessageUnsub = on('new-message', handleNewMessage);
+
+    // Очищення при розмонтуванні
+    return () => {
+      newMessageUnsub();
+      off('new-message');
+    };
+  }, [chatId, user, fetchMessages, on, off, onMarkAsRead]);
+
+  // Групування повідомлень за датою
+  const groupedMessages = useMemo(() => {
+    return messages.reduce<Record<string, MessageData[]>>((groups, message) => {
+      const date = new Date(message.createdAt).toLocaleDateString();
+      if (!groups[date]) {
+        groups[date] = [];
+      }
+      groups[date].push(message);
+      return groups;
+    }, {});
   }, [messages]);
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <div className="flex items-center justify-center h-full p-4">
         <Spinner size="lg" />
@@ -444,11 +219,11 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
     );
   }
 
-  if (error) {
+  if (error && messages.length === 0) {
     return (
       <div className="p-4 text-destructive">
         <p>{error}</p>
-        <Button variant="outline" onClick={() => setLoading(true)} className="mt-2">
+        <Button variant="outline" onClick={fetchMessages} className="mt-2">
           Спробувати знову
         </Button>
       </div>
@@ -459,7 +234,7 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
     <div className="flex flex-col h-full overflow-y-auto p-4" onScroll={handleScroll}>
       {hasMore && (
         <div className="py-2 text-center">
-          <Button variant="outline" onClick={() => loadMoreMessages()} disabled={loadingMore}>
+          <Button variant="outline" onClick={loadMoreMessages} disabled={loadingMore}>
             {loadingMore ? <Spinner size="sm" className="mr-2" /> : null}
             Завантажити більше
           </Button>
@@ -475,12 +250,12 @@ export function MessageList({ chatId, onReplyToMessage, onMarkAsRead }: MessageL
           </div>
 
           <div className="space-y-2">
-            {dateMessages.map(message => (
+            {dateMessages.map((message: MessageData) => (
               <MessageItem
                 key={message.id}
                 message={message}
                 isOwnMessage={message.userId === user?.id}
-                onReply={handleReply}
+                onReply={() => onReplyToMessage && onReplyToMessage(message)}
               />
             ))}
           </div>

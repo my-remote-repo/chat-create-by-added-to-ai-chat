@@ -19,134 +19,56 @@ export function ChatRoom({ chatId }: { chatId: string }) {
   const { authenticatedFetch } = useAuth();
   const router = useRouter();
   const { isConnected, emit } = useSocketIo();
-  const lastReadUpdateRef = useRef<number>(0);
-  const isFetchingRef = useRef(false);
-  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const retryCountRef = useRef(0);
+  const fetchInProgress = useRef(false);
 
-  // Функція для позначення повідомлень як прочитаних (з дебаунсом)
-  const handleMarkAsRead = useCallback(() => {
-    const now = Date.now();
-    // Виконуємо не частіше ніж раз на 5 секунд
-    if (now - lastReadUpdateRef.current > 5000) {
-      lastReadUpdateRef.current = now;
-      if (isConnected && chatId) {
-        emit('read-message', { chatId });
+  // Функція для одноразового отримання даних чату
+  const fetchChat = useCallback(async () => {
+    // Запобігання повторним запитам
+    if (fetchInProgress.current) return;
+    fetchInProgress.current = true;
+
+    try {
+      setLoading(true);
+      const response = await authenticatedFetch(`/api/chat/${chatId}`);
+
+      if (!response) {
+        throw new Error('Failed to fetch chat details');
       }
+
+      if (response.ok) {
+        const data = await response.json();
+        setChat(data);
+        setError(null);
+      } else {
+        throw new Error('Failed to fetch chat details');
+      }
+    } catch (err) {
+      console.error('Error fetching chat details:', err);
+      setError('Не вдалося завантажити деталі чату');
+    } finally {
+      setLoading(false);
+      fetchInProgress.current = false;
+    }
+  }, [chatId, authenticatedFetch]);
+
+  // Спрощений обробник прочитання повідомлень
+  const handleMarkAsRead = useCallback(() => {
+    if (isConnected && chatId) {
+      emit('read-message', { chatId });
     }
   }, [chatId, emit, isConnected]);
 
+  // Підключення до чату при монтуванні компонента
   useEffect(() => {
-    const fetchChatDetails = async () => {
-      // Запобігаємо паралельним запитам
-      if (isFetchingRef.current) return;
-
-      isFetchingRef.current = true;
-
-      try {
-        setLoading(true);
-        const response = await authenticatedFetch(`/api/chat/${chatId}`);
-
-        if (!response) throw new Error('Failed to fetch chat details');
-
-        if (response.ok) {
-          const data = await response.json();
-          setChat(data);
-          // Скидаємо лічильник спроб після успіху
-          retryCountRef.current = 0;
-        } else {
-          throw new Error('Failed to fetch chat details');
-        }
-      } catch (err) {
-        console.error('Error fetching chat details:', err);
-        setError('Не вдалося завантажити деталі чату');
-
-        // Збільшуємо час очікування з кожною невдалою спробою (експоненційна затримка)
-        retryCountRef.current += 1;
-      } finally {
-        setLoading(false);
-        isFetchingRef.current = false;
-
-        // Очищаємо попередній таймер, якщо він є
-        if (fetchTimeoutRef.current) {
-          clearTimeout(fetchTimeoutRef.current);
-          fetchTimeoutRef.current = null;
-        }
-      }
-    };
-
-    // Очищаємо всі таймери при розмонтовуванні або зміні chatId
-    return () => {
-      if (fetchTimeoutRef.current) {
-        clearTimeout(fetchTimeoutRef.current);
-        fetchTimeoutRef.current = null;
-      }
-    };
-  }, [chatId, authenticatedFetch]);
-
-  // Окремий ефект для початкового завантаження та планування інтервалу
-  useEffect(() => {
-    // Функція для безпечного завантаження з затримкою у разі невдачі
-    const loadChatWithBackoff = async () => {
-      if (isFetchingRef.current) return;
-
-      isFetchingRef.current = true;
-
-      try {
-        setLoading(true);
-        const response = await authenticatedFetch(`/api/chat/${chatId}`);
-
-        if (!response) throw new Error('Failed to fetch chat details');
-
-        if (response.ok) {
-          const data = await response.json();
-          setChat(data);
-          // Скидаємо лічильник спроб після успіху
-          retryCountRef.current = 0;
-        } else {
-          throw new Error('Failed to fetch chat details');
-        }
-      } catch (err) {
-        console.error('Error fetching chat details:', err);
-        setError('Не вдалося завантажити деталі чату');
-
-        // Збільшуємо час очікування з кожною невдалою спробою (експоненційна затримка)
-        retryCountRef.current += 1;
-
-        // Плануємо наступну спробу з експоненційною затримкою, але не більше 1 хвилини
-        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 60000);
-
-        if (retryCountRef.current < 5) {
-          // Максимум 5 спроб
-          fetchTimeoutRef.current = setTimeout(() => {
-            loadChatWithBackoff();
-          }, delay);
-        }
-      } finally {
-        setLoading(false);
-        isFetchingRef.current = false;
-      }
-    };
-
     if (chatId) {
-      loadChatWithBackoff();
-
-      // Встановлюємо інтервал для періодичного оновлення статусу прочитання
-      const readInterval = setInterval(() => {
-        if (chat) {
-          // Перевіряємо, чи чат уже завантажено
-          handleMarkAsRead();
-        }
-      }, 30000); // Кожні 30 секунд
-
-      return () => {
-        clearInterval(readInterval);
-        if (fetchTimeoutRef.current) {
-          clearTimeout(fetchTimeoutRef.current);
-        }
-      };
+      fetchChat();
     }
-  }, [chatId, authenticatedFetch, handleMarkAsRead, chat]);
+
+    // Очищення при розмонтуванні
+    return () => {
+      fetchInProgress.current = false;
+    };
+  }, [chatId, fetchChat]);
 
   const handleGoBack = () => {
     router.push('/chat');
@@ -179,7 +101,6 @@ export function ChatRoom({ chatId }: { chatId: string }) {
     );
   }
 
-  // Якщо чат ще не завантажено, але є помилка або йде завантаження, показуємо заглушку
   if (!chat) {
     return (
       <div className="flex flex-col h-full">
