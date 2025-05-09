@@ -8,6 +8,8 @@ import { useSocketIo } from '@/shared/hooks/useSocketIo';
 import { useTypingIndicator } from '@/shared/hooks/useTypingIndicator';
 import { Spinner } from '@/shared/components/ui/spinner';
 import { MessageData } from './MessageList';
+import { v4 as uuidv4 } from 'uuid'; // Додаємо цей імпорт
+import { useOfflineMessageQueue } from '@/shared/hooks/useOfflineMessageQueue';
 
 interface MessageInputProps {
   chatId: string;
@@ -21,11 +23,13 @@ export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageI
   const [uploading, setUploading] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { authenticatedFetch } = useAuth();
-  const { sendMessage, sendTypingStatus } = useSocketIo();
+  const { user, authenticatedFetch } = useAuth();
+  const { isConnected, emit } = useSocketIo();
   const { setTyping } = useTypingIndicator(chatId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingMessages = useRef<Map<string, any>>(new Map());
+  const { queueMessage } = useOfflineMessageQueue();
 
   // Автоматичний ресайз текстової області
   useEffect(() => {
@@ -108,6 +112,36 @@ export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageI
     setSendingMessage(true);
 
     try {
+      // Генеруємо тимчасовий ID для оптимістичного UI
+      const tempId = uuidv4();
+
+      // Створюємо оптимістичне повідомлення
+      const optimisticMessage: MessageData = {
+        id: tempId,
+        content: message.trim(),
+        chatId,
+        userId: user?.id || '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isDeleted: false,
+        readBy: [user?.id || ''],
+        files: [],
+        user: {
+          id: user?.id || '',
+          name: user?.name || '',
+          image: user?.image || null,
+        },
+        replyTo: replyToMessage || undefined,
+        isOptimistic: true,
+        status: 'sending',
+      };
+
+      // Зберігаємо в кеші
+      pendingMessages.current.set(tempId, optimisticMessage);
+
+      // Емітуємо подію для нового повідомлення (для оптимістичного UI)
+      emit('new-message', optimisticMessage);
+
       // Завантажуємо файли, якщо вони є
       const uploadedFiles = files.length > 0 ? await uploadFiles() : [];
 
@@ -115,16 +149,41 @@ export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageI
         throw new Error('Failed to upload files');
       }
 
-      // Відправляємо повідомлення через Socket.io
-      const result = sendMessage({
-        chatId,
-        content: message.trim(),
-        replyToId: replyToMessage?.id,
-        files: uploadedFiles || undefined,
-      });
+      // Оновлюємо оптимістичне повідомлення з файлами
+      if (uploadedFiles && uploadedFiles.length > 0) {
+        optimisticMessage.files = uploadedFiles;
+        // Оновлюємо повідомлення в UI
+        emit('message-updated', optimisticMessage);
+      }
 
-      if (!result) {
-        throw new Error('Failed to send message');
+      // Перевіряємо, чи є підключення
+      if (isConnected) {
+        // Відправляємо реальне повідомлення через Socket.io
+        emit('send-message', {
+          tempId, // Включаємо тимчасовий ID для відстеження
+          chatId,
+          content: message.trim(),
+          replyToId: replyToMessage?.id,
+          files: uploadedFiles || undefined,
+        });
+      } else {
+        // Якщо немає підключення, додаємо повідомлення до черги
+        queueMessage({
+          id: tempId,
+          chatId,
+          content: message.trim(),
+          replyToId: replyToMessage?.id,
+          files: uploadedFiles || [], // Виправлення типу: null -> []
+          createdAt: new Date(),
+        });
+
+        // Оновлюємо статус повідомлення на "offline"
+        setTimeout(() => {
+          emit('message-status-updated', {
+            messageId: tempId,
+            status: 'offline',
+          });
+        }, 1000);
       }
 
       // Очищаємо форму
@@ -257,17 +316,46 @@ export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageI
             value={message}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
-            placeholder="Введіть повідомлення..."
+            placeholder={
+              isConnected
+                ? 'Введіть повідомлення...'
+                : 'Офлайн режим - повідомлення будуть надіслані після підключення'
+            }
             className="w-full p-3 pr-10 resize-none min-h-[40px] max-h-[200px] rounded-md border border-input focus:outline-none focus:ring-2 focus:ring-ring"
             rows={1}
-            disabled={sendingMessage || uploading}
+            disabled={!isConnected || sendingMessage || uploading}
           />
+          {!isConnected && (
+            <div className="absolute right-2 top-2 text-destructive">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+                <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+                <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+                <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+                <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                <line x1="12" y1="20" x2="12.01" y2="20"></line>
+              </svg>
+            </div>
+          )}
         </div>
 
         <Button
           type="button"
           onClick={handleSend}
-          disabled={(!message.trim() && files.length === 0) || sendingMessage || uploading}
+          disabled={
+            (!message.trim() && files.length === 0) || sendingMessage || uploading || !isConnected
+          }
           size="icon"
         >
           {sendingMessage || uploading ? (

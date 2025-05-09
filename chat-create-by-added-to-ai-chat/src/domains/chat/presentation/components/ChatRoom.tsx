@@ -164,7 +164,7 @@ export function ChatRoom({ chatId }: ChatRoomProps) {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <MessageList chatId={chatId} key={chatId} />
+        <MessageList chatId={chatId} key={chatId} onReplyToMessage={handleReply} />
       </div>
 
       <MessageInput chatId={chatId} replyToMessage={replyTo} onCancelReply={handleCancelReply} />

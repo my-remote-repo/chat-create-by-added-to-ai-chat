@@ -12,6 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/shared/components/ui/dropdown-menu';
+import { Spinner } from '@/shared/components/ui/spinner';
 
 interface MessageItemProps {
   message: MessageData;
@@ -73,19 +74,13 @@ export function MessageItem({ message, isOwnMessage, onReply }: MessageItemProps
                 xmlns="http://www.w3.org/2000/svg"
                 width="16"
                 height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                fill="currentColor"
+                viewBox="0 0 16 16"
                 className="mr-2"
               >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-                <line x1="10" y1="9" x2="8" y2="9" />
+                <path d="M4.5 9.5A.5.5 0 0 1 5 9h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5z" />
+                <path d="M9.5 5a.5.5 0 0 0-1 0v5a.5.5 0 0 0 1 0V5z" />
+                <path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4.5a1 1 0 0 1 .293-.707l5-5A1 1 0 0 1 7.5 0h5a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V1H7v3.5a1 1 0 0 1-1 1H3v8.5A1.5 1.5 0 0 0 4.5 15h7A1.5 1.5 0 0 0 13 13.5V4.5a.5.5 0 0 0-.5-.5H10V1.707L13.293 5H14z" />
               </svg>
               <span className="text-sm truncate">{file.name}</span>
             </a>
@@ -107,6 +102,49 @@ export function MessageItem({ message, isOwnMessage, onReply }: MessageItemProps
     );
   };
 
+  // Відображення статусу відправлення повідомлення
+  const renderMessageStatus = () => {
+    if (!isOwnMessage) return null;
+
+    if (message.isOptimistic) {
+      if (message.status === 'sending') {
+        return <Spinner size="sm" className="ml-2" />;
+      } else if (message.status === 'error') {
+        return (
+          <span className="ml-2 text-xs text-destructive flex items-center">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="mr-1"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            Помилка
+          </span>
+        );
+      }
+    }
+
+    // Для успішно відправлених повідомлень
+    return (
+      <span className="ml-2 text-xs text-muted-foreground">
+        {message.readBy && message.readBy.length > 1 ? 'Прочитано' : 'Надіслано'}
+      </span>
+    );
+  };
+
+  // Додаємо прозорість для оптимістичних повідомлень
+  const messageOpacity = message.isOptimistic ? 'opacity-80' : 'opacity-100';
+
   return (
     <div className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[80%] ${isOwnMessage ? 'order-1' : 'order-2'}`}>
@@ -127,7 +165,7 @@ export function MessageItem({ message, isOwnMessage, onReply }: MessageItemProps
             <div
               className={`p-3 rounded-lg ${
                 isOwnMessage
-                  ? 'bg-primary text-primary-foreground ml-auto rounded-br-none'
+                  ? `bg-primary text-primary-foreground ml-auto rounded-br-none ${messageOpacity}`
                   : 'bg-secondary rounded-bl-none'
               }`}
             >
@@ -161,11 +199,9 @@ export function MessageItem({ message, isOwnMessage, onReply }: MessageItemProps
             <div className="flex items-center mt-1">
               <span className="text-xs text-muted-foreground">{messageTime}</span>
 
-              {message.readBy && message.readBy.length > 0 && isOwnMessage && (
-                <span className="ml-2 text-xs text-muted-foreground">Прочитано</span>
-              )}
+              {renderMessageStatus()}
 
-              {!isEditing && (
+              {!isEditing && !message.isOptimistic && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="h-6 w-6 p-0 ml-2">
