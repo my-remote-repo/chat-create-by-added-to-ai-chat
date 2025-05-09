@@ -8,16 +8,18 @@ import { useSocketIo } from '@/shared/hooks/useSocketIo';
 import { useTypingIndicator } from '@/shared/hooks/useTypingIndicator';
 import { Spinner } from '@/shared/components/ui/spinner';
 import { MessageData } from './MessageList';
-import { v4 as uuidv4 } from 'uuid'; // Додаємо цей імпорт
+import { v4 as uuidv4 } from 'uuid';
 import { useOfflineMessageQueue } from '@/shared/hooks/useOfflineMessageQueue';
 
-interface MessageInputProps {
+export function MessageInput({
+  chatId,
+  replyToMessage,
+  onCancelReply,
+}: {
   chatId: string;
   replyToMessage?: MessageData | null;
   onCancelReply?: () => void;
-}
-
-export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageInputProps) {
+}) {
   const [message, setMessage] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -173,7 +175,7 @@ export function MessageInput({ chatId, replyToMessage, onCancelReply }: MessageI
           chatId,
           content: message.trim(),
           replyToId: replyToMessage?.id,
-          files: uploadedFiles || [], // Виправлення типу: null -> []
+          files: uploadedFiles || [],
           createdAt: new Date(),
         });
 

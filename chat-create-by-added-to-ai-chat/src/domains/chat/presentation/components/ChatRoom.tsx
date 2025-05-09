@@ -11,35 +11,8 @@ import { MessageList, MessageData } from '@/domains/message/presentation/compone
 import { MessageInput } from '@/domains/message/presentation/components/MessageInput';
 import { useSocketIo } from '@/shared/hooks/useSocketIo';
 
-interface ChatRoomProps {
-  chatId: string;
-}
-
-interface ChatDetails {
-  id: string;
-  name: string;
-  description?: string;
-  isGroup: boolean;
-  ownerId?: string;
-  otherUser?: {
-    id: string;
-    name: string;
-    image?: string;
-    status?: string;
-  };
-  participants: Array<{
-    userId: string;
-    isAdmin: boolean;
-    user?: {
-      id: string;
-      name: string;
-      image?: string;
-    };
-  }>;
-}
-
-export function ChatRoom({ chatId }: ChatRoomProps) {
-  const [chat, setChat] = useState<ChatDetails | null>(null);
+export function ChatRoom({ chatId }: { chatId: string }) {
+  const [chat, setChat] = useState<any>(null); // Використовуємо any для спрощення
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<MessageData | null>(null);

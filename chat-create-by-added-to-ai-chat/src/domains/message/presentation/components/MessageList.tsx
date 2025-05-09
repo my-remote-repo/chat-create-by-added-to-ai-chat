@@ -9,7 +9,6 @@ import { formatDate } from '@/lib/utils';
 import { MessageItem } from './MessageItem';
 import { useSocketIo } from '@/shared/hooks/useSocketIo';
 import { useTypingIndicator } from '@/shared/hooks/useTypingIndicator';
-import { v4 as uuidv4 } from 'uuid';
 
 export interface MessageData {
   id: string;
@@ -27,18 +26,17 @@ export interface MessageData {
     image?: string | null;
   };
   replyTo?: MessageData | null;
-  // Додаємо прапорець для оптимістичних повідомлень
   isOptimistic?: boolean;
-  // Для відстеження статусу відправлення
-  status?: 'sending' | 'sent' | 'error';
+  status?: 'sending' | 'sent' | 'error' | 'offline';
 }
 
-interface MessageListProps {
+export function MessageList({
+  chatId,
+  onReplyToMessage,
+}: {
   chatId: string;
   onReplyToMessage?: (message: MessageData) => void;
-}
-
-export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
+}) {
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,19 +46,15 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { on, joinChat, markMessagesAsRead, off } = useSocketIo();
   const { typingMessage } = useTypingIndicator(chatId);
-  const shouldScrollToBottomRef = useRef(true);
-
   const oldestMessageRef = useRef<string | null>(null);
   const newestMessageIdRef = useRef<string | null>(null);
-
-  // Для відстеження, чи користувач прокрутив вище кінця чату
   const userScrolledUpRef = useRef(false);
+  const shouldScrollToBottomRef = useRef(true);
 
   // Обробник прокрутки для визначення напрямку
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-      // Якщо користувач прокрутив вгору більш ніж на 100px від дна
       userScrolledUpRef.current = scrollTop < scrollHeight - clientHeight - 100;
 
       // Якщо користувач дійшов до верху, завантажуємо більше повідомлень
@@ -71,7 +65,7 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
     [hasMore, loadingMore]
   );
 
-  // Захоплюємо функцію завантаження більшої кількості повідомлень у ref для використання в ефектах
+  // Завантаження старіших повідомлень
   const loadMoreMessages = useCallback(async () => {
     if (!hasMore || loadingMore || !oldestMessageRef.current) return;
 
@@ -93,12 +87,10 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
               (newMsg: MessageData) => !prevMessages.some(msg => msg.id === newMsg.id)
             );
 
-            // Оновлюємо ID найстарішого повідомлення
             if (newMessages.length > 0) {
               oldestMessageRef.current = newMessages[newMessages.length - 1].id;
             }
 
-            // Об'єднуємо та сортуємо повідомлення
             const updatedMessages = [...prevMessages, ...newMessages];
             return updatedMessages.sort(
               (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -179,23 +171,18 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
     };
   }, [chatId, authenticatedFetch, joinChat, markMessagesAsRead, off]);
 
-  // Додавання нового повідомлення у список (як оптимістичне, так і підтверджене)
+  // Додавання нового повідомлення у список
   const addNewMessage = useCallback((newMessage: MessageData, isOptimistic = false) => {
     setMessages(prevMessages => {
       // Якщо це оптимістичне повідомлення, просто додаємо його
       if (isOptimistic) {
-        // Додаємо прапорець для відображення статусу відправлення
         newMessage.isOptimistic = true;
         newMessage.status = 'sending';
-
-        // Оновлюємо ref для найновішого повідомлення
         newestMessageIdRef.current = newMessage.id;
-
         return [...prevMessages, newMessage];
       }
 
       // Якщо це підтверджене повідомлення з сервера
-      // Перевіряємо, чи є у нас вже оптимістична версія з таким же тимчасовим ID
       const optimisticIndex = prevMessages.findIndex(
         msg => msg.isOptimistic && msg.id === newMessage.id
       );
@@ -217,9 +204,7 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
         }
 
         // Це нове повідомлення з сервера
-        // Оновлюємо ref для найновішого повідомлення
         newestMessageIdRef.current = newMessage.id;
-
         const updatedMessages = [...prevMessages, newMessage];
         return updatedMessages.sort(
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -239,7 +224,7 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
   useEffect(() => {
     const handleNewMessage = (message: MessageData) => {
       if (message.chatId === chatId) {
-        // Додаємо нове повідомлення, якщо воно стосується цього чату
+        // Додаємо нове повідомлення
         addNewMessage(message);
 
         // Якщо повідомлення від інших користувачів, позначаємо його як прочитане
@@ -249,10 +234,10 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
       }
     };
 
-    // Підписуємось на події нових повідомлень
+    // Підписка на події нових повідомлень
     const unsubscribe = on('new-message', handleNewMessage);
 
-    // Підписуємось на події оновлення статусу повідомлень
+    // Підписка на оновлення статусу повідомлень
     const statusUnsubscribe = on(
       'message-status-updated',
       (data: { messageId: string; status: string }) => {
@@ -263,7 +248,7 @@ export function MessageList({ chatId, onReplyToMessage }: MessageListProps) {
           if (messageIndex !== -1) {
             updatedMessages[messageIndex] = {
               ...updatedMessages[messageIndex],
-              status: data.status as 'sending' | 'sent' | 'error',
+              status: data.status as 'sending' | 'sent' | 'error' | 'offline',
               isOptimistic: data.status === 'sending',
             };
           }

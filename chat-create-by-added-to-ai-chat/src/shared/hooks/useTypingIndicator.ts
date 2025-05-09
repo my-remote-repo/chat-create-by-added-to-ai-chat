@@ -95,7 +95,7 @@ export function useTypingIndicator(chatId: string) {
       debounceTimerRef.current = setTimeout(() => {
         sendTypingStatus(chatId, isTyping);
 
-        // Якщо статус "не набирає", автоматично очищаємо через 5 секунд
+        // Якщо статус "набирає", автоматично очищаємо через 5 секунд
         if (isTyping) {
           debounceTimerRef.current = setTimeout(() => {
             sendTypingStatus(chatId, false);

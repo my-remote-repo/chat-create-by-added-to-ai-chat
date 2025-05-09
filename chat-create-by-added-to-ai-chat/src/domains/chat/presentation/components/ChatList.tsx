@@ -10,31 +10,14 @@ import { Spinner } from '@/shared/components/ui/spinner';
 import { UserAvatar } from '@/domains/user/presentation/components/Avatar';
 import { formatRelativeTime } from '@/lib/utils';
 
-interface ChatListProps {
+export function ChatList({
+  selectedChatId,
+  onSelectChat,
+}: {
   selectedChatId?: string;
   onSelectChat?: (chatId: string) => void;
-}
-
-interface ChatItem {
-  id: string;
-  name: string;
-  lastMessage?: {
-    content: string;
-    createdAt: Date;
-    senderId: string;
-  };
-  isGroup: boolean;
-  unreadCount: number;
-  otherUser?: {
-    id: string;
-    name: string;
-    image?: string | null;
-    status?: string;
-  };
-}
-
-export function ChatList({ selectedChatId, onSelectChat }: ChatListProps) {
-  const [chats, setChats] = useState<ChatItem[]>([]);
+}) {
+  const [chats, setChats] = useState<any[]>([]); // Використовуємо any для спрощення
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
