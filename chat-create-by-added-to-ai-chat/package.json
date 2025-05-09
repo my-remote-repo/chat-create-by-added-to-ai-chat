@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "socket": "node scripts/socket-server.js",
-    "socket:dev": "tsc -p tsconfig.socket.json && node socket-server.js",
+    "build:server": "tsc -p tsconfig.server.json",
+    "socket": "ts-node --project tsconfig.server.json -r tsconfig-paths/register scripts/socket-server.ts",
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
@@ -43,6 +43,7 @@
     "clsx": "^2.1.0",
     "crypto-browserify": "^3.12.1",
     "date-fns": "^3.3.1",
+    "dotenv": "^16.5.0",
     "jose": "^6.0.10",
     "lucide-react": "^0.335.0",
     "mongodb": "^6.16.0",
@@ -90,6 +91,7 @@
     "tailwindcss": "^3.4.1",
     "ts-jest": "^29.3.2",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.3.3"
   }
 }

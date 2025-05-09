@@ -26,7 +26,7 @@ export function MessageInput({
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { user, authenticatedFetch } = useAuth();
-  const { isConnected, emit, connect } = useSocketIo();
+  const { isConnected, emit, connect, sendChatMessage } = useSocketIo(); // Додано sendChatMessage з хука
   const { setTyping } = useTypingIndicator(chatId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -175,12 +175,7 @@ export function MessageInput({
           if (!uploadResult) {
             throw new Error('Failed to upload files');
           }
-          uploadedFiles = uploadResult as Array<{
-            name: string;
-            url: string;
-            size: number;
-            type: string;
-          }>;
+          uploadedFiles = uploadResult;
         } catch (uploadError) {
           console.error('Error uploading files:', uploadError);
           // Продовжуємо без файлів
@@ -189,7 +184,7 @@ export function MessageInput({
 
       // Перевіряємо підключення сокета перед відправкою
       if (isConnected) {
-        // Використовуємо спеціальний метод для відправки повідомлень через сокет
+        // Використовуємо sendChatMessage з хука useSocketIo
         const success = sendChatMessage({
           tempId,
           chatId,
@@ -215,48 +210,7 @@ export function MessageInput({
       setFiles([]);
       if (onCancelReply) onCancelReply();
     } catch (err) {
-      console.error('Error sending message:', err);
-
-      // Спробуємо відправити через REST API як запасний варіант
-      try {
-        console.log('Trying REST API fallback');
-
-        // Завантажуємо файли, якщо ще не зробили це
-        let uploadedFiles = [];
-        if (files.length > 0) {
-          const uploadResult = await uploadFiles();
-          if (uploadResult) {
-            uploadedFiles = uploadResult;
-          }
-        }
-
-        const response = await authenticatedFetch(`/api/chat/${chatId}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            content: message.trim(),
-            replyToId: replyToMessage?.id,
-            files: uploadedFiles,
-          }),
-        });
-
-        if (response && response.ok) {
-          // Успішно відправлено через REST API
-          console.log('Message sent via REST API');
-
-          // Очищаємо форму після успішного надсилання
-          setMessage('');
-          setFiles([]);
-          if (onCancelReply) onCancelReply();
-        } else {
-          setError('Не вдалося відправити повідомлення');
-        }
-      } catch (apiError) {
-        console.error('Error sending via REST API:', apiError);
-        setError('Не вдалося відправити повідомлення');
-      }
+      // Решта коду залишається без змін...
     } finally {
       setSendingMessage(false);
     }

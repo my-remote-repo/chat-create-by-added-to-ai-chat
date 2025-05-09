@@ -4,6 +4,7 @@ import { Server as HttpServer } from 'http';
 import { JwtService } from '@/domains/auth/infrastructure/services/jwtService';
 import { ServiceFactory } from '@/shared/infrastructure/DependencyInjection';
 import { redisClient } from './redis-client';
+import { Chat, ChatDTO } from '@/domains/chat/domain/entities/chat';
 
 // Розширення інтерфейсу Socket для типізації даних користувача
 interface AuthenticatedSocket extends Socket {
@@ -95,7 +96,8 @@ export function configureSocketServer(httpServer: HttpServer) {
           console.log(`User ${userId} auto-joined chat: ${chat.id}`);
         }
 
-        return userChats.map(chat => chat.id);
+        // Виправлена типізація - використовуємо структурну типізацію
+        return userChats.map((chat: { id: string }) => chat.id);
       } catch (error) {
         console.error('Error getting user chats:', error);
         return [];
@@ -112,7 +114,7 @@ export function configureSocketServer(httpServer: HttpServer) {
 
         // Перевіряємо, чи користувач має доступ до чату
         const chatService = ServiceFactory.createChatService();
-        const chat = await chatService.getChatById(chatId, userId);
+        const chat: Chat | null = await chatService.getChatById(chatId, userId); // Явно вказуємо тип
 
         if (chat) {
           socket.join(`chat:${chatId}`);

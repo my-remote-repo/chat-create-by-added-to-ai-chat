@@ -1,17 +1,16 @@
-// socket-server.js
-const { createServer } = require('http');
-require('dotenv').config();
+// scripts/socket-server.ts
+import { createServer } from 'http';
+import { config } from 'dotenv';
+import { configureSocketServer } from '../src/lib/socket-service-server';
 
-// Динамічний імпорт сконфігурованого сервера
+// Завантаження змінних середовища
+config();
+
+// Функція запуску сервера
 async function startServer() {
   try {
     // Створюємо HTTP сервер
     const httpServer = createServer();
-
-    // Імпортуємо модуль, скомпільований з TypeScript
-    // Потрібно використовувати require для визначення шляху до скомпільованого файлу
-    const modulePath = '../src/lib/socket-service-server.ts';
-    const { configureSocketServer } = require(modulePath);
 
     // Налаштовуємо Socket.IO сервер
     const io = configureSocketServer(httpServer);
@@ -45,7 +44,7 @@ async function startServer() {
   }
 }
 
-// Запуск сервера (без async/await на верхньому рівні)
+// Запуск сервера
 startServer().catch(err => {
   console.error('Fatal error during startup:', err);
   process.exit(1);
