@@ -35,12 +35,18 @@ export async function POST(req: NextRequest) {
         email: result.user.email,
       });
 
-      // Встановлюємо refresh токен у HttpOnly cookie
+      // Виводимо у консоль для відлагодження
+      console.log('Login successful, returning tokens:', {
+        accessToken: result.tokens.accessToken ? 'present' : 'missing',
+        refreshToken: result.tokens.refreshToken ? 'present' : 'missing',
+      });
+
+      // Відправляємо обидва токени в тілі відповіді ДЛЯ CLIENT-SIDE
       const response = NextResponse.json({
         user: result.user,
         tokens: {
           accessToken: result.tokens.accessToken,
-          // Не відправляємо refreshToken у відповіді, якщо встановлюємо як HttpOnly cookie
+          refreshToken: result.tokens.refreshToken, // Тут додаємо refreshToken
         },
       });
 

@@ -141,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // Функція для перевірки та оновлення токена
+  // Функція для перевірки та оновлення токена
   const refreshTokenIfNeeded = async () => {
     try {
       const accessToken = localStorage.getItem('accessToken');
@@ -167,15 +168,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (timeToExpire < 5 * 60 * 1000) {
           console.log('Token is about to expire, attempting refresh...');
 
-          // Отримуємо refresh token
+          // Отримуємо refresh token з localStorage
           const refreshToken = localStorage.getItem('refreshToken');
 
           if (!refreshToken) {
-            console.error('No refresh token available');
+            console.error('No refresh token available in localStorage');
             return;
           }
 
-          console.log('Sending refresh token request...');
+          console.log('Sending refresh token request with token from localStorage');
 
           const response = await fetch('/api/auth/refresh-token', {
             method: 'POST',
@@ -183,29 +184,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({ refreshToken }),
-            credentials: 'include', // Включаємо cookies
+            credentials: 'include', // Важливо для отримання cookies
           });
 
           if (response.ok) {
             const data = await response.json();
-            console.log('Token refreshed successfully');
+            console.log('Token refreshed successfully, received new tokens:', {
+              accessToken: data.accessToken ? 'present' : 'missing',
+              refreshToken: data.refreshToken ? 'present' : 'missing',
+            });
 
-            localStorage.setItem('accessToken', data.accessToken);
-            document.cookie = `accessToken=${data.accessToken}; path=/; max-age=86400; samesite=strict`;
+            if (data.accessToken) {
+              localStorage.setItem('accessToken', data.accessToken);
 
-            // Якщо сторінка оновлюється або відкривається нова вкладка,
-            // це допоможе зберегти консистентний стан автентифікації
-            if (!user) {
-              const userResponse = await fetch('/api/auth/me', {
-                headers: {
-                  Authorization: `Bearer ${data.accessToken}`,
-                },
-              });
-
-              if (userResponse.ok) {
-                const userData = await userResponse.json();
-                setUser(userData.user);
+              // Перевіримо refresh token в відповіді
+              if (data.refreshToken) {
+                localStorage.setItem('refreshToken', data.refreshToken);
+                console.log('New refresh token saved to localStorage');
+              } else {
+                console.warn(
+                  'No refresh token in response data - check your server implementation'
+                );
               }
+
+              // Якщо сторінка оновлюється або відкривається нова вкладка,
+              // це допоможе зберегти консистентний стан автентифікації
+              if (!user) {
+                const userResponse = await fetch('/api/auth/me', {
+                  headers: {
+                    Authorization: `Bearer ${data.accessToken}`,
+                  },
+                });
+
+                if (userResponse.ok) {
+                  const userData = await userResponse.json();
+                  setUser(userData.user);
+                }
+              }
+            } else {
+              console.error('No access token in refresh response');
             }
           } else {
             console.error('Failed to refresh token:', await response.text());
@@ -358,6 +375,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email, password }),
+        credentials: 'include', // Важливо для отримання cookies
       });
 
       const data = await response.json();
@@ -371,6 +389,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       console.log('Автентифікація успішна, обробка токенів');
+      console.log('Дані відповіді:', {
+        hasUser: !!data.user,
+        hasTokens: !!data.tokens,
+        accessToken: data.tokens?.accessToken ? 'present' : 'missing',
+        refreshToken: data.tokens?.refreshToken ? 'present' : 'missing',
+      });
 
       // Переконуємось, що токени існують перед збереженням
       if (data.tokens && data.tokens.accessToken) {
@@ -386,29 +410,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               data.tokens.refreshToken.substring(0, 10) + '...'
             );
           } else {
-            console.warn('RefreshToken відсутній у відповіді');
+            console.warn('RefreshToken відсутній у відповіді API');
+            // Спроба отримати з cookie - хоча HttpOnly cookie не буде доступний для JavaScript
+            const cookies = document.cookie
+              .split(';')
+              .map(cookie => cookie.trim())
+              .reduce(
+                (acc, current) => {
+                  const [name, value] = current.split('=');
+                  acc[name] = value;
+                  return acc;
+                },
+                {} as Record<string, string>
+              );
+
+            console.log('Cookies доступні в браузері:', cookies);
           }
         } catch (storageError) {
           console.error('Помилка при збереженні токенів у localStorage:', storageError);
-          // Продовжуємо виконання навіть при помилці localStorage
         }
 
-        // Генеруємо CSRF токен при логіні
+        // Генеруємо CSRF токен при логіні, якщо потрібно
         generateCsrfToken();
 
-        // Зберігаємо токени в cookies
-        try {
-          document.cookie = `accessToken=${data.tokens.accessToken}; path=/; max-age=86400; samesite=strict`;
-
-          // Зберігаємо refreshToken в cookie також
-          if (data.tokens.refreshToken) {
-            document.cookie = `refreshToken=${data.tokens.refreshToken}; path=/; max-age=${30 * 24 * 60 * 60}; samesite=strict`;
-          }
-        } catch (cookieError) {
-          console.error('Помилка при встановленні cookie:', cookieError);
-        }
-
-        // Тестова перевірка збережених токенів
+        // Тестова перевірка збережених токенів через 1 секунду
         setTimeout(() => {
           try {
             const savedAccessToken = localStorage.getItem('accessToken');
