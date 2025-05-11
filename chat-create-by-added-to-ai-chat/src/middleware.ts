@@ -2,8 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { JwtService } from './domains/auth/infrastructure/services/jwtService';
 import { AuthLogger } from './domains/auth/infrastructure/services/authLogger';
-// Додайте імпорт Redis клієнта
-// import { redisClient } from './lib/redis-client';
+import TokenManager from '@/shared/utils/tokenManager'; // Виправлений імпорт
 
 // Маршрути, що не потребують авторизації
 const publicRoutes = [
@@ -14,7 +13,7 @@ const publicRoutes = [
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/reset-password',
-  '/api/auth/reset-password/confirm', // Додайте цей рядок!
+  '/api/auth/reset-password/confirm',
   '/api/auth/verify-email',
   '/api/auth/refresh-token',
 ];
@@ -22,7 +21,6 @@ const publicRoutes = [
 // Шляхи, які починаються з цих префіксів, також публічні
 const publicPrefixes = ['/auth/', '/_next/', '/favicon.ico', '/assets/'];
 
-// src/middleware.ts
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   console.log('Middleware running for path:', pathname);
@@ -43,13 +41,6 @@ export async function middleware(req: NextRequest) {
   // Альтернативно, можливо токен є в cookie (для браузерних запитів)
   const cookieToken = req.cookies.get('accessToken')?.value;
   const accessToken = token || cookieToken;
-
-  // console.log('Middleware auth check:', {
-  //   hasAuthHeader: !!authHeader,
-  //   hasToken: !!token,
-  //   hasCookieToken: !!cookieToken,
-  //   hasAccessToken: !!accessToken,
-  // });
 
   if (!accessToken) {
     console.log('No access token found, redirecting to login');
@@ -86,6 +77,24 @@ export async function middleware(req: NextRequest) {
       const url = new URL('/login', req.url);
       url.searchParams.set('returnUrl', pathname);
       return NextResponse.redirect(url);
+    }
+
+    // Перевіряємо, чи токен скоро закінчиться
+    try {
+      if (TokenManager.isTokenExpiringSoon(accessToken)) {
+        // Якщо це не API запит, додамо параметр для клієнтського оновлення
+        if (!pathname.startsWith('/api/')) {
+          // Додаємо параметр до URL, якщо він ще не доданий
+          if (!req.nextUrl.searchParams.has('refresh')) {
+            const rewriteUrl = new URL(req.nextUrl.href);
+            rewriteUrl.searchParams.set('refresh', 'true');
+            return NextResponse.rewrite(rewriteUrl);
+          }
+        }
+      }
+    } catch (tokenError) {
+      console.error('Error checking token expiry:', tokenError);
+      // Продовжуємо виконання навіть при помилці перевірки терміну дії
     }
 
     // Додаємо інформацію про користувача до запиту

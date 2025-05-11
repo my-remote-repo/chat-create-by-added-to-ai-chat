@@ -86,6 +86,48 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [user]);
 
+  // Додамо автоматичне оновлення токену для сокетів
+  useEffect(() => {
+    if (!socket || !user) return;
+
+    // Функція для оновлення авторизації сокета
+    const updateSocketAuth = async () => {
+      try {
+        const accessToken = localStorage.getItem('accessToken');
+        if (!accessToken) return;
+
+        // Перезавантажуємо авторизаційні дані сокета
+        socket.auth = {
+          token: accessToken,
+          userId: user.id,
+          userName: user.name,
+          userImage: user.image,
+        };
+
+        // Якщо сокет вже підключений, роз'єднуємо і перепідключаємо з новими даними
+        if (socket.connected) {
+          socket.disconnect();
+          socket.connect();
+        }
+      } catch (error) {
+        console.error('Error updating socket auth:', error);
+      }
+    };
+
+    // Слухаємо події зміни localStorage
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'accessToken' && e.newValue) {
+        updateSocketAuth();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [socket, user]);
+
   // Метод для явного підключення
   const connect = () => {
     if (socketRef.current && !socketRef.current.connected) {

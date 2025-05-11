@@ -1,8 +1,9 @@
 // src/domains/auth/presentation/providers/AuthProvider.tsx
 'use client';
 
-import { createContext, useContext, ReactNode, useState, useEffect } from 'react';
+import { createContext, useContext, ReactNode, useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import TokenManager from '@/shared/utils/tokenManager';
 
 type User = {
   id: string;
@@ -38,6 +39,7 @@ type AuthContextType = {
   updateUser: (user: User) => void;
   sensitiveRequest: (url: string, data: any) => Promise<Response | null>;
   authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response | null>;
+  refreshTokenIfNeeded: (force?: boolean) => Promise<boolean>; // Додана нова функція
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const [tokenRefreshInProgress, setTokenRefreshInProgress] = useState(false);
 
   // Перевірка автентифікації при завантаженні
   useEffect(() => {
@@ -142,7 +145,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Функція для перевірки та оновлення токена
   // Функція для перевірки та оновлення токена
-  const refreshTokenIfNeeded = async () => {
+  const refreshTokenIfNeeded = useCallback(
+    async (force = false): Promise<boolean> => {
+      try {
+        const accessToken = localStorage.getItem('accessToken');
+        const refreshToken = localStorage.getItem('refreshToken');
+
+        if (!accessToken || !refreshToken) {
+          console.log('No tokens found, skipping refresh');
+          return false;
+        }
+
+        // Перевіряємо, чи токен скоро закінчиться або оновлення примусове
+        if (force || TokenManager.isTokenExpiringSoon(accessToken)) {
+          console.log('Token is about to expire or force refresh requested, refreshing...');
+
+          // Запобігаємо паралельним оновленням
+          if (tokenRefreshInProgress) {
+            console.log('Token refresh already in progress, skipping');
+            return false;
+          }
+
+          setTokenRefreshInProgress(true);
+
+          const response = await fetch('/api/auth/refresh-token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refreshToken }),
+            credentials: 'include',
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to refresh token');
+          }
+
+          const data = await response.json();
+
+          if (data.accessToken && data.refreshToken) {
+            TokenManager.saveTokens(data.accessToken, data.refreshToken);
+            console.log('Tokens refreshed successfully');
+            return true;
+          } else {
+            throw new Error('Invalid token response format');
+          }
+        }
+
+        return false;
+      } catch (error) {
+        console.error('Error refreshing token:', error);
+        // При помилці оновлення, виходимо з системи
+        handleAuthError();
+        return false;
+      } finally {
+        setTokenRefreshInProgress(false);
+      }
+    },
+    [tokenRefreshInProgress]
+  );
+
+  // Автоматичне оновлення токену з інтервалом
+  useEffect(() => {
+    if (!user) return;
+
+    // Перевіряємо термін дії токену кожні 30 секунд
+    const interval = setInterval(refreshTokenIfNeeded, 30000);
+
+    // Також спробуємо оновити токен при завантаженні компонента
+    refreshTokenIfNeeded();
+
+    return () => clearInterval(interval);
+  }, [user, refreshTokenIfNeeded]);
+
+  // Перевірка та оновлення токену при необхідності
+  const refreshTokenIfNeededOriginal = useCallback(async () => {
     try {
       const accessToken = localStorage.getItem('accessToken');
       if (!accessToken) {
@@ -234,7 +311,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Помилка при оновленні токена:', error);
     }
-  };
+  }, [user]);
+
+  // Автоматичне оновлення токену з інтервалом
+  useEffect(() => {
+    // Перевіряємо термін дії токену кожну хвилину
+    const interval = setInterval(() => {
+      refreshTokenIfNeeded().catch(err => {
+        console.error('Error in token refresh interval:', err);
+      });
+    }, 60 * 1000);
+
+    // Запускаємо перевірку при завантаженні компонента
+    refreshTokenIfNeeded().catch(err => {
+      console.error('Error in initial token refresh:', err);
+    });
+
+    return () => clearInterval(interval);
+  }, [refreshTokenIfNeeded]);
 
   // Інтервал для перевірки та оновлення токена
   useEffect(() => {
@@ -311,34 +405,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // Обгортка для fetch з автентифікацією та обробкою помилок
+  // Оновлюємо authenticatedFetch для автоматичного оновлення токена
   const authenticatedFetch = async (
     url: string,
     options: RequestInit = {}
   ): Promise<Response | null> => {
-    const accessToken = localStorage.getItem('accessToken');
-
     try {
+      let accessToken = localStorage.getItem('accessToken');
+
+      // Якщо токен відсутній або закінчується, спробуємо оновити
+      if (!accessToken || TokenManager.isTokenExpiringSoon(accessToken)) {
+        const refreshed = await refreshTokenIfNeeded(true);
+        if (refreshed) {
+          accessToken = localStorage.getItem('accessToken');
+        }
+      }
+
+      // Якщо токен все ще відсутній, повертаємо помилку
+      if (!accessToken) {
+        handleAuthError();
+        return null;
+      }
+
       const response = await fetch(url, {
         ...options,
         headers: {
           ...options.headers,
-          Authorization: accessToken ? `Bearer ${accessToken}` : '',
+          Authorization: `Bearer ${accessToken}`,
         },
-        credentials: 'include', // Включаємо cookies
+        credentials: 'include',
       });
 
-      // Якщо отримуємо 401, спробуємо оновити токен
+      // Якщо отримуємо 401, спробуємо оновити токен і повторити запит
       if (response.status === 401) {
-        const refreshSuccessful = await refreshToken();
+        const refreshed = await refreshTokenIfNeeded(true);
 
-        if (refreshSuccessful) {
+        if (refreshed) {
+          // Отримуємо оновлений токен
+          accessToken = localStorage.getItem('accessToken');
+
           // Повторюємо запит з новим токеном
-          const newAccessToken = localStorage.getItem('accessToken');
           return fetch(url, {
             ...options,
             headers: {
               ...options.headers,
-              Authorization: `Bearer ${newAccessToken}`,
+              Authorization: `Bearer ${accessToken}`,
             },
             credentials: 'include',
           });
@@ -351,10 +462,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return response;
     } catch (error) {
-      console.error('Помилка при виконанні автентифікованого запиту:', error);
+      console.error('Error in authenticatedFetch:', error);
       return null;
     }
   };
+
+  // Додаємо слухачів подій для синхронізації між вкладками
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'accessToken') {
+        if (!e.newValue && user) {
+          // Токен видалено в іншій вкладці
+          clearAuthData();
+          router.push('/login');
+        } else if (e.newValue && !user) {
+          // Токен з'явився в іншій вкладці
+          refreshTokenIfNeeded();
+        }
+      }
+    };
+
+    // Слухаємо події localStorage для синхронізації між вкладками
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [user, router, refreshTokenIfNeeded]);
 
   // Обробка помилок автентифікації
   const handleAuthError = () => {
@@ -621,6 +755,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(updatedUser);
   };
 
+  // Додаємо функцію refreshTokenIfNeeded до контексту аутентифікації
   return (
     <AuthContext.Provider
       value={{
@@ -635,6 +770,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updateUser,
         sensitiveRequest,
         authenticatedFetch,
+        refreshTokenIfNeeded,
       }}
     >
       {children}

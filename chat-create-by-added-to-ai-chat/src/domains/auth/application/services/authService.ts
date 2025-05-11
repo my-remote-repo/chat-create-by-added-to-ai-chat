@@ -308,6 +308,49 @@ export class AuthService {
   }
 
   /**
+   * Оновлення токенів за допомогою refresh токена
+   */
+  async refreshTokens(
+    refreshToken: string
+  ): Promise<{ userId: string; accessToken: string; refreshToken: string } | null> {
+    try {
+      // Верифікуємо refresh токен
+      const jwtService = this.jwtService;
+      const payload = await jwtService.verifyRefreshToken(refreshToken);
+
+      if (!payload || !payload.userId) {
+        return null;
+      }
+
+      // Перевіряємо, чи токен не відкликаний
+      const isValid = await this.validateRefreshToken(payload.userId, refreshToken);
+
+      if (!isValid) {
+        return null;
+      }
+
+      // Генеруємо нові токени
+      const tokens = await jwtService.generateTokens(
+        payload.userId,
+        payload.email as string,
+        payload.role as string
+      );
+
+      // Оновлюємо запис про токен
+      await this.updateRefreshToken(payload.userId, refreshToken, tokens.refreshToken);
+
+      return {
+        userId: payload.userId,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
+    } catch (error) {
+      console.error('Error refreshing tokens:', error);
+      return null;
+    }
+  }
+
+  /**
    * Верифікація email
    */
   async verifyEmail(token: string): Promise<boolean> {

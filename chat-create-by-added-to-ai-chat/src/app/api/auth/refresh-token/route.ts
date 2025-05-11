@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ServiceFactory } from '@/shared/infrastructure/DependencyInjection';
 import { AuthLogger } from '@/domains/auth/infrastructure/services/authLogger';
-import { JwtService } from '@/domains/auth/infrastructure/services/jwtService';
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,50 +29,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Refresh token is required' }, { status: 401 });
     }
 
-    // Отримуємо JWT сервіс
-    const jwtService = new JwtService();
+    // Отримуємо авторизаційний сервіс
+    const authService = ServiceFactory.createAuthService();
 
     try {
-      // Верифікуємо refresh токен
-      const payload = await jwtService.verifyRefreshToken(refreshToken);
+      // Оновлюємо токени через сервіс
+      const result = await authService.refreshTokens(refreshToken);
 
-      if (!payload || !payload.userId) {
-        AuthLogger.warn('Invalid refresh token', { refreshToken });
+      if (!result) {
+        AuthLogger.warn('Invalid or expired refresh token');
         return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 });
       }
 
-      // Отримуємо сервіс автентифікації
-      const authService = ServiceFactory.createAuthService();
+      const { accessToken, refreshToken: newRefreshToken, userId } = result;
 
-      // Перевіряємо чи токен не відкликаний
-      const isValid = await authService.validateRefreshToken(payload.userId, refreshToken);
+      AuthLogger.info('Token refreshed successfully', { userId });
 
-      if (!isValid) {
-        AuthLogger.warn('Refresh token revoked', { userId: payload.userId, refreshToken });
-        return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 });
-      }
-
-      // Генеруємо нові токени
-      const { accessToken, refreshToken: newRefreshToken } = await jwtService.generateTokens(
-        payload.userId,
-        payload.email as string,
-        payload.role as string
-      );
-
-      // Оновлюємо запис про токен
-      await authService.updateRefreshToken(payload.userId, refreshToken, newRefreshToken);
-
-      AuthLogger.info('Token refreshed successfully', { userId: payload.userId });
-
-      // Встановлюємо новий refresh токен в кукі
+      // Встановлюємо HTTP-only cookie для refresh token
       const response = NextResponse.json(
         {
           accessToken,
-          refreshToken: newRefreshToken, // Додаємо refresh токен у відповідь
+          refreshToken: newRefreshToken,
         },
         { status: 200 }
       );
 
+      // Встановлюємо новий refresh токен в HTTP-only cookie
       response.cookies.set({
         name: 'refreshToken',
         value: newRefreshToken,
@@ -86,7 +67,7 @@ export async function POST(req: NextRequest) {
 
       return response;
     } catch (error) {
-      console.error('JWT Verification error:', error);
+      console.error('JWT or token validation error:', error);
       AuthLogger.warn('Invalid refresh token', { refreshToken });
       return NextResponse.json({ error: 'Invalid or expired refresh token' }, { status: 401 });
     }

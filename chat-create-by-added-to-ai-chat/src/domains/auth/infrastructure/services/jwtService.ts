@@ -1,6 +1,7 @@
 // src/domains/auth/infrastructure/services/jwtService.ts
 import { SignJWT, jwtVerify } from 'jose';
 import { v4 as uuidv4 } from 'uuid';
+import { JWT_ACCESS_TOKEN_EXPIRY, JWT_REFRESH_TOKEN_EXPIRY } from '@/shared/constants';
 
 // Розширюємо інтерфейс JWTPayload з jose
 interface CustomJWTPayload {
@@ -34,18 +35,18 @@ export class JwtService {
     const jti = uuidv4();
     const iat = Math.floor(Date.now() / 1000);
 
-    // Генерація access токена (коротка тривалість - 15 хвилин)
+    // Генерація access токена з використанням констант
     const accessToken = await new SignJWT({ userId, email, role })
       .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('15m')
+      .setExpirationTime(JWT_ACCESS_TOKEN_EXPIRY)
       .setIssuedAt()
       .setJti(jti)
       .sign(this.accessTokenSecret);
 
-    // Генерація refresh токена (довга тривалість - 30 днів)
+    // Генерація refresh токена з використанням констант
     const refreshToken = await new SignJWT({ userId, jti })
       .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime('30d')
+      .setExpirationTime(JWT_REFRESH_TOKEN_EXPIRY)
       .setIssuedAt()
       .sign(this.refreshTokenSecret);
 
